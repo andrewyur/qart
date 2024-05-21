@@ -12,7 +12,7 @@ fn main() {
 
     let f = gf::Field::new();
 
-    println!("{}", f.mul_f(232, 2));
+    let mes = [1, 2, 3, 4];
 }
 // a fast implementation of the galois field of 256 and reed solomon encoding optimizations based on https://research.swtch.com/field
 // operations are mod 285 to conform to QR code spec
@@ -65,51 +65,45 @@ mod gf {
         }
     }
 
-    // generates n message encoding bits for message slice mes, using Field f
-    // assumes n is less than 255
-    fn encode(f: Field, mes: &[u16], n: usize) {
-        let m = mes.len();
-
+    // generates a generator polynomial where n message encoding bits are needed, using Field f
+    // n is limited to 8 bits for now, can be increasead by replacing u16 with bigger type
+    pub fn gen_poly(f: Field, n: usize) -> Vec<u16> {
         let exp = f.exp();
         let log = f.log();
 
-        //
-        //  TODO: there should be a faster and cleaner way to do this
-        //
-
         // values in this are exponents of alpha coefficients
-        let mut gen: Vec<Option<u16>> = Vec::with_capacity(n);
-        gen.push(Some(0));
+        let mut gen: Vec<u16> = Vec::with_capacity(n);
+        gen.push(0);
 
         // curr must always be in sync with gen
         let mut curr = Vec::with_capacity(n);
-        curr.push(None);
+        curr.push(0);
 
-        while gen.len() < n {
-            curr.push(None);
-            curr[1..].copy_from_slice(&gen);
+        while gen.len() < n + 1 {
             // multiply existing generator polynomial by (x - α^e)
+            curr.copy_from_slice(&gen);
 
             let alpha_e = gen.len() as u16 - 1;
 
-            gen.push(None);
+            curr.iter_mut().for_each(|v| *v += alpha_e);
 
-            curr.iter_mut().for_each(|v| match v {
-                Some(e) => *e += alpha_e,
-                None => (),
-            });
-
-            for (gen_e, curr_e) in std::iter::zip(gen.iter_mut(), curr.iter_mut()) {
-                match (*gen_e, *curr_e) {
-                    (_, None) => continue,
-                    (None, _) => *gen_e = *curr_e,
-                    (g_e, c_e) => {
-                        *gen_e = Some(
-                            log[(exp[g_e.unwrap() as usize] ^ exp[c_e.unwrap() as usize]) as usize],
-                        );
-                    }
+            let fix_len = |v| {
+                if v > 255 {
+                    return v % 256 + v / 256;
                 }
+                v
+            };
+            for i in 0..(gen.len() - 1) {
+                let gen_v = fix_len(gen[i + 1]) as usize;
+                let curr_v = fix_len(curr[i]) as usize;
+                gen[i + 1] = log[(exp[curr_v] ^ exp[gen_v]) as usize];
             }
+            gen.push(fix_len(curr[curr.len() - 1]));
+            curr.push(0);
         }
+        gen
     }
+
+    // generates (gen.len() - 1) error correcting bits for message mes, using Field f and generator polynomial gen
+    fn EC_codewords(f: Field, mes: &[u8], gen: &[u16]) {}
 }
