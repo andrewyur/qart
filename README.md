@@ -9,8 +9,6 @@ implementation of [QArt Code generator](https://research.swtch.com/qr/draw/) in 
 
 ## Current Itinerary
 - Working QR code generator
-  - Reed Solomon Encoding
-    - faster + cleaner way to find generator polynomial
   - Final Structuring
   - Matrix Placement
   - Data Masking
