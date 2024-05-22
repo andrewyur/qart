@@ -12,7 +12,11 @@ fn main() {
 
     let f = gf::Field::new();
 
-    println!("{:?}", gf::gen_poly(f, 10));
+    let mes = [
+        32, 91, 11, 120, 209, 114, 220, 77, 67, 64, 236, 17, 236, 17, 236, 17,
+    ];
+
+    println!("{:?}", gf::ec_codewords(&f, &mes, &gf::gen_poly(&f, 10)));
 }
 // a fast implementation of the galois field of 256 and reed solomon encoding optimizations based on https://research.swtch.com/field
 // operations are mod 285 to conform to QR code spec
@@ -53,21 +57,11 @@ mod gf {
         pub fn log(&self) -> [u8; 256] {
             self.log.to_owned()
         }
-
-        // multiplication via addition of logarithms
-        pub fn mul_f(&self, x: u8, y: u8) -> u8 {
-            if x == 0 || y == 0 {
-                return 0;
-            }
-
-            // this is why exp is 510 long, so we dont have to do % 255
-            self.exp[(self.log[x as usize] + self.log[y as usize]) as usize]
-        }
     }
 
-    // generates a generator polynomial where n message encoding bits are needed, using Field f
+    // returns a generator polynomial where n message encoding bits are needed, using Field f
     // no way to check if generator polynomial is correct past n = 254
-    pub fn gen_poly(f: Field, n: usize) -> Vec<u8> {
+    pub fn gen_poly(f: &Field, n: usize) -> Vec<u8> {
         let exp = f.exp();
         let log = f.log();
 
@@ -75,7 +69,7 @@ mod gf {
         let mut gen: Vec<u8> = Vec::with_capacity(n);
         gen.push(0);
 
-        // curr must always be in sync with gen
+        // curr must always be the same length as gen
         let mut curr = Vec::with_capacity(n);
         curr.push(0);
 
@@ -89,9 +83,9 @@ mod gf {
                 *v = match (*v).checked_add(alpha_e) {
                     Some(s) => s,
                     None => {
-                        ((alpha_e as u16 + *v as u16) % 256 + (alpha_e as u16 + *v as u16) / 256)
+                        ((alpha_e as u16 + *v as u16) % 256 + (alpha_e as u16 + *v as u16) / 256) // :(
                             as u8
-                    } // :(
+                    }
                 }
             });
 
@@ -102,12 +96,31 @@ mod gf {
             curr.push(0);
         }
 
-        // translate exponents into numbers
-        gen.iter().map(|e| exp[*e as usize]).collect()
+        gen
     }
 
     // generates (gen.len() - 1) error correcting bits for message mes, using Field f and generator polynomial gen
-    fn EC_codewords(f: Field, mes: &[u8], gen: &[u16]) {
-        let ec_codewords: Vec<u16> = vec![];
+    pub fn ec_codewords(f: &Field, mes: &[u8], gen: &[u8]) -> Vec<u8> {
+        let exp = f.exp();
+        let log = f.log();
+
+        // vector with message in it, with room for remainder at the end
+        let mut p: Vec<_> = Vec::with_capacity(mes.len() + gen.len() - 2);
+        p.extend(mes.iter());
+        p.extend(std::iter::repeat(0).take(gen.len() - 1));
+
+        for i in 0..mes.len() {
+            if p[i] == 0 {
+                continue;
+            }
+            // k = pi / g0
+            let k = log[p[i] as usize] as usize;
+            // p -= k * g
+            for (j, g) in gen.iter().enumerate() {
+                p[i + j] ^= exp[k as usize + *g as usize];
+            }
+        }
+
+        p[(mes.len())..].to_vec()
     }
 }
