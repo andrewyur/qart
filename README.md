@@ -18,3 +18,5 @@ implementation of [QArt Code generator](https://research.swtch.com/qr/draw/) in 
   
 ## Long Term Itinerary
 - Compile to WASM and host on gh-pages
+- Pixel editor
+- color selector

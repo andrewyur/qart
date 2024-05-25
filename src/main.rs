@@ -1,6 +1,11 @@
+use qart::qr::Code;
+
 fn main() {
-    // let code = qart::qr::Code::new(String::from("HI!!!"));
-    // let img = code.build();
+    let code = Code::new(String::from("HI!!!"));
+    let img_res = code.build();
+    if let Ok(img) = img_res {
+        img.save("code.png").unwrap()
+    }
 
     // let img_width = 300;
     // let img_height = 300;
