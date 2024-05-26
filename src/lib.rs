@@ -3,6 +3,7 @@ mod gf;
 mod img;
 
 pub mod qr {
+    use crate::consts;
     use crate::gf::{self, Field};
     use crate::img::CodeImg;
     use image::{ImageBuffer, Rgba};
@@ -36,6 +37,8 @@ pub mod qr {
 
     pub struct Code {
         url: String,
+        version: u8,
+        field: Field,
     }
     // target length is assumed to be less than 256 chars
     // error correction is assumed to be L
@@ -44,23 +47,27 @@ pub mod qr {
 
     impl Code {
         // constructor, takes the information to be encoded in the code
-        pub fn new(url: String) -> Self {
-            Self { url }
+        pub fn new(url: String, version: u8) -> Self {
+            let field = Field::new();
+            Self {
+                url,
+                version,
+                field,
+            }
         }
 
         fn encode_chars_to_bits(&self) -> Vec<u8> {
             // see https://www.thonky.com/qr-code-tutorial
-            let required_data_bits = 8 * 136;
+            let required_data_bits = consts::required_data_bits(self.version);
             let mut data_bits: Vec<u8> = Vec::with_capacity(required_data_bits);
 
             // indicators
-            data_bits.extend_from_slice(&[0, 1, 0, 0]);
+            data_bits.extend_from_slice(&consts::MODE_IND);
 
-            // byte mode char count indicator for v6 must be 8 bits
-            let mut char_count_indicator = Vec::with_capacity(8);
+            let mut char_count_indicator = Vec::with_capacity(consts::CHAR_CT_IND_LEN);
             let byte = self.url.len() as u8;
             let mut mask = 1;
-            for _ in 0..8 {
+            for _ in 0..consts::CHAR_CT_IND_LEN {
                 let bit = ((byte & mask) != 0) as u8;
                 char_count_indicator.insert(0, bit);
                 mask <<= 1;
@@ -80,105 +87,108 @@ pub mod qr {
             assert!(data_bits.len() % 8 == 0);
 
             //padding
-            let mut toggle = true;
+            let mut i = 0;
             while data_bits.len() < required_data_bits {
-                let byte = if toggle {
-                    [1, 1, 1, 0, 1, 1, 0, 0]
-                } else {
-                    [0, 0, 0, 1, 0, 0, 0, 1]
-                };
-
-                toggle = !toggle;
-
+                let byte = consts::pad_bytes(i);
                 data_bits.extend_from_slice(&byte);
+                i += 1;
             }
             data_bits
         }
 
-        fn split_and_interleave_bytes(data_bytes: Vec<u8>, f: &Field, poly: &[u8]) -> Vec<u8> {
+        fn split_and_interleave_bytes(&self, data_bytes: Vec<u8>) -> Vec<u8> {
             // structure final message
-            // 6-L:
-            // total number of data_bytes codewords: 136
-            // EC codewords per block: 18
-            // Number of Blocks in Group 1: 2
-            // Number of data_bytes codewords in each of Group 1's Blocks: 68
+            // qr codes v1-v7 at EC L have only 1 group
 
-            let mut code_bytes: Vec<u8> = Vec::with_capacity(data_bytes.len() + 18 * 2 + 1);
+            let data_bytes_per_block = consts::data_bytes_per_block(self.version);
+            let ec_bytes_per_block = consts::ec_bytes_per_block(self.version);
+            let number_of_blocks = consts::number_of_blocks(self.version);
 
-            // group 1 data + interleaving
-            let mut data_blocks = [Vec::with_capacity(68), Vec::with_capacity(68)];
-            data_blocks[0].extend_from_slice(&data_bytes[..68]);
-            data_blocks[1].extend_from_slice(&data_bytes[68..]);
+            let mut code_bytes: Vec<u8> = Vec::with_capacity(
+                (data_bytes_per_block + ec_bytes_per_block) * number_of_blocks + 1,
+            );
 
-            let mut code_bytes_left = true;
-            let mut i = 0;
-            while code_bytes_left {
-                code_bytes_left = false;
-                for block in data_blocks.iter() {
-                    if let Some(byte) = block.get(i) {
-                        code_bytes.push(*byte);
-                        code_bytes_left = true;
-                    }
-                }
-                i += 1;
+            // data + interleaving
+            let mut data_blocks = Vec::with_capacity(number_of_blocks);
+
+            for block in 0..number_of_blocks {
+                let start = block * data_bytes_per_block;
+                let end = start + data_bytes_per_block;
+                let data_block = data_bytes[start..end].iter();
+
+                data_blocks.push(data_block);
             }
 
-            // group 1 error correction + interleaving
-            let mut ec_blocks = [Vec::with_capacity(18), Vec::with_capacity(18)];
-            ec_blocks[0].extend_from_slice(&gf::ec_codewords(&f, &data_blocks[0], &poly));
-            ec_blocks[1].extend_from_slice(&gf::ec_codewords(&f, &data_blocks[1], &poly));
+            for _ in 0..data_bytes_per_block {
+                for block in data_blocks.iter_mut() {
+                    if let Some(byte) = block.next() {
+                        code_bytes.push(*byte);
+                    }
+                }
+            }
 
-            let mut code_bytes_left = true;
-            let mut i = 0;
-            while code_bytes_left {
-                code_bytes_left = false;
+            // error correction + interleaving
+            let poly = gf::gen_poly(&self.field, ec_bytes_per_block);
+
+            let mut ec_blocks = Vec::with_capacity(number_of_blocks);
+
+            for block in 0..number_of_blocks {
+                let start = block * data_bytes_per_block;
+                let end = start + data_bytes_per_block;
+                let ec_block = gf::ec_codewords(&self.field, &data_bytes[start..end], &poly);
+
+                ec_blocks.push(ec_block);
+            }
+
+            for i in 0..ec_bytes_per_block {
                 for block in ec_blocks.iter() {
                     if let Some(byte) = block.get(i) {
                         code_bytes.push(*byte);
-                        code_bytes_left = true;
                     }
                 }
-                i += 1;
             }
 
             // add remainder bits
-            code_bytes.push(0);
+            // code_bytes.push(0);
 
             code_bytes
         }
 
-        pub fn build(&self) -> Result<ImageBuffer<Rgba<u8>, Vec<u8>>, String> {
+        pub fn build(&self, module_size: u32) -> Result<ImageBuffer<Rgba<u8>, Vec<u8>>, String> {
+            // version + url validation
             if self.url.chars().any(|x| x >= '\u{00FF}') {
                 return Err(String::from("url cannot be encoded as ISO 8859-1!"));
             }
+            if self.version > 7 || self.version == 0 {
+                return Err(String::from("version must be from 1 to 7!"));
+            }
 
+            // data + ec encoding
             let data_bits = self.encode_chars_to_bits();
 
-            // create error correction bits
-            // create qr code template from image buf
-
             let data_bytes = bits_to_bytes(&data_bits);
-            println!("Data Bytes: {:?}", &data_bytes[0..8]);
 
-            let f = gf::Field::new();
-            let poly = gf::gen_poly(&f, 18);
+            let code_bytes = self.split_and_interleave_bytes(data_bytes);
 
-            let code_bytes = Self::split_and_interleave_bytes(data_bytes, &f, &poly);
-            println!("Code Bytes: {:?}", &code_bytes[0..8]);
-
-            // module placement in matrix
-            let module_size = 1;
-            let width = 41;
-            let height = 41;
+            // create the code image
+            let side_length = consts::side_len_of_version(self.version);
             let black = Rgba([0, 0, 0, 255]);
             let white = Rgba([255, 255, 255, 255]);
             let reserved = Rgba([0, 0, 255, 255]);
+            let mut code = CodeImg::new(
+                module_size,
+                side_length,
+                black,
+                white,
+                reserved,
+                self.version,
+            );
 
-            let mut code = CodeImg::new(module_size, width, height, black, white, reserved);
+            // place the data + ec inside the code image
+            let mut x = side_length - 1;
+            let mut y = side_length - 1;
 
-            // place the data_bytes bits
-            let mut x = width - 1;
-            let mut y = height - 1;
+            let code_bits = bytes_to_bits(&code_bytes);
 
             enum Move {
                 Left,
@@ -186,127 +196,184 @@ pub mod qr {
                 DownRight,
             }
 
-            let mut next_move = Move::Left;
             let mut prev_move = Move::UpRight;
+            let mut next_move = Move::Left;
 
-            for byte in code_bytes {
-                let mut mask = 0b10000000;
-                for _ in 0..8 {
-                    let color = (byte & mask != 0) == ((y + 1) % 2 == 0);
+            let debug = false;
+            let mut count = 0;
+            let mut save = 0;
+            for bit in code_bits {
+                count += 1;
+
+                let color = (bit == 1) == ((y + 1) % 2 == 0);
+                if !debug {
                     code.fill_module(x, y, color);
-
-                    // print!("{} ", (byte & mask != 0));
-
-                    match next_move {
-                        Move::Left => {
-                            // println!("Next move is left!");
-                            if x != 0 && !code.is_open(x - 1, y) {
-                                return Err(format!("No valid moves! at ({},{})", x, y));
-                            }
-                            x -= 1;
-                            match prev_move {
-                                Move::Left => {
-                                    if y != 0 && code.is_open(x + 1, y - 1) {
-                                        next_move = Move::UpRight;
-                                    } else {
-                                        next_move = Move::DownRight;
-                                    }
-                                    prev_move = Move::Left;
-                                }
-                                other_move => {
-                                    next_move = other_move;
-                                    prev_move = Move::Left;
-                                }
-                            }
-                        }
-                        Move::UpRight => {
-                            // println!("Next move is up + right!");
-                            if y != 0 && code.is_open(x + 1, y - 1) {
-                                x += 1;
-                                y -= 1;
-                                next_move = Move::Left;
-                                prev_move = Move::UpRight;
-                            } else if y != 0 && code.is_open(x, y - 1) {
-                                y -= 1;
-                                next_move = Move::UpRight;
-                                prev_move = Move::UpRight;
-                            } else if y != 0 && code.is_open(x + 1, y - 2) {
-                                x += 1;
-                                y -= 2;
-                                next_move = Move::Left;
-                                prev_move = Move::UpRight;
-                            } else if y != 0 && code.is_open(x + 1, y - 6) {
-                                x += 1;
-                                y -= 6;
-                                next_move = Move::Left;
-                                prev_move = Move::UpRight;
-                            } else if x != 0 && code.is_open(x - 1, y) {
-                                x -= 1;
-                                next_move = Move::Left;
-                                prev_move = Move::Left;
-                            } else if x != 0 && code.is_open(x - 2, y) {
-                                x -= 2;
-                                next_move = Move::Left;
-                                prev_move = Move::Left;
-                            } else {
-                                return Err(format!("No valid moves! at ({},{})", x, y));
-                            }
-                        }
-                        Move::DownRight => {
-                            // println!("Next move is down + right!");
-                            if code.is_open(x + 1, y + 1) {
-                                x += 1;
-                                y += 1;
-                                prev_move = Move::DownRight;
-                            } else if code.is_open(x + 1, y + 2) {
-                                x += 1;
-                                y += 2;
-                                prev_move = Move::DownRight;
-                            } else if code.is_open(x + 1, y + 6) {
-                                x += 1;
-                                y += 6;
-                                prev_move = Move::DownRight;
-                            } else if x != 0 && code.is_open(x - 1, y) {
-                                x -= 1;
-                                prev_move = Move::Left;
-                            } else if x != 0 && y != 0 && code.is_open(x - 1, y - 8) {
-                                x -= 1;
-                                y -= 8;
-                                prev_move = Move::Left;
-                            } else {
-                                break;
-                            }
-                            next_move = Move::Left;
-                        }
-                    };
-                    mask >>= 1;
-                    // code.save("code.png").unwrap()
+                } else {
+                    if ((count - 1) / 8) % 3 == 0 {
+                        code.debug(x, y, Rgba([255, 0, 0, 255]))
+                    } else if ((count - 1) / 8) % 3 == 1 {
+                        code.debug(x, y, Rgba([0, 255, 0, 255]))
+                    } else {
+                        code.debug(x, y, Rgba([0, 0, 255, 255]))
+                    }
                 }
-                // break;
+
+                if save > 0 {
+                    if save == 1 {
+                        code.save();
+                        save = 0;
+                    } else {
+                        save -= 1;
+                    }
+                }
+
+                match next_move {
+                    Move::Left => {
+                        if x != 0 && !code.is_open(x - 1, y) {
+                            return Err(format!("No valid moves! at ({},{})", x, y));
+                        }
+                        x -= 1;
+                        match prev_move {
+                            Move::Left => {
+                                if y != 0 && code.is_open(x + 1, y - 1) {
+                                    next_move = Move::UpRight;
+                                } else {
+                                    next_move = Move::DownRight;
+                                }
+                                prev_move = Move::Left;
+                            }
+                            other_move => {
+                                next_move = other_move;
+                                prev_move = Move::Left;
+                            }
+                        }
+                    }
+                    Move::UpRight => {
+                        if y != 0 && code.is_open(x + 1, y - 1) {
+                            x += 1;
+                            y -= 1;
+                            next_move = Move::Left;
+                            prev_move = Move::UpRight;
+                        } else if y >= 1 && code.is_open(x, y - 1) {
+                            y -= 1;
+                            next_move = Move::UpRight;
+                            prev_move = Move::UpRight;
+                        } else if y >= 2 && code.is_open(x + 1, y - 2) {
+                            x += 1;
+                            y -= 2;
+                            next_move = Move::Left;
+                            prev_move = Move::UpRight;
+                        } else if y >= 2 && code.is_open(x, y - 2) {
+                            y -= 2;
+                            next_move = Move::UpRight;
+                            prev_move = Move::UpRight;
+                        } else if y >= 6 && code.is_open(x + 1, y - 6) {
+                            x += 1;
+                            y -= 6;
+                            next_move = Move::Left;
+                            prev_move = Move::UpRight;
+                        } else if y >= 7 && x >= 2 && code.is_open(x - 2, y - 7) {
+                            x -= 2;
+                            y -= 7;
+                            next_move = Move::DownRight;
+                            prev_move = Move::DownRight;
+                        } else if x >= 1 && code.is_open(x - 1, y) {
+                            x -= 1;
+                            next_move = Move::Left;
+                            prev_move = Move::Left;
+                        } else if x >= 2 && code.is_open(x - 2, y) {
+                            x -= 2;
+                            next_move = Move::Left;
+                            prev_move = Move::Left;
+                        } else {
+                            return Err(format!("No valid moves! at ({},{})", x, y));
+                        }
+                    }
+                    Move::DownRight => {
+                        if code.is_open(x + 1, y + 1) {
+                            x += 1;
+                            y += 1;
+                            next_move = Move::Left;
+                            prev_move = Move::DownRight;
+                        } else if code.is_open(x + 1, y + 2) {
+                            x += 1;
+                            y += 2;
+                            next_move = Move::Left;
+                            prev_move = Move::DownRight;
+                        } else if code.is_open(x, y + 1) {
+                            y += 1;
+                            prev_move = Move::DownRight;
+                            next_move = Move::DownRight;
+                        } else if code.is_open(x + 1, y + 6) {
+                            x += 1;
+                            y += 6;
+                            next_move = Move::Left;
+                            prev_move = Move::DownRight;
+                        } else if x >= 1 && code.is_open(x - 1, y) {
+                            x -= 1;
+                            next_move = Move::Left;
+                            prev_move = Move::Left;
+                        } else if x >= 1 && y >= 8 && code.is_open(x - 1, y - 8) {
+                            x -= 1;
+                            y -= 8;
+                            next_move = Move::Left;
+                            prev_move = Move::Left;
+                        } else {
+                            break;
+                        }
+                    }
+                };
+                // if count % 8 == 0 {
+                //     std::thread::sleep(std::time::Duration::from_millis(1000));
+                //     code.save();
+                //     println!("count: {}", count);
+                // }
             }
 
-            // generate format and version information
-            let fmt = vec![1, 1, 1, 0, 0, 1, 0, 1, 1, 1, 1, 0, 0, 1, 1];
+            // place format information
+            let format_string = consts::format_string(self.version);
 
-            for (i, bit) in fmt[..7].iter().enumerate() {
+            for (i, bit) in format_string[..7].iter().enumerate() {
                 let color = *bit == 1;
-                code.fill_module(8, (height - 1) - i as u32, color);
+                code.fill_module(8, (side_length - 1) - i as u32, color);
                 if code.is_reserved(i as u32, 8) {
                     code.fill_module(i as u32, 8, color);
                 } else {
                     code.fill_module(i as u32 + 1, 8, color);
                 }
             }
-            for (i, bit) in fmt[7..].iter().enumerate() {
+            for (i, bit) in format_string[7..].iter().enumerate() {
                 let color = *bit == 1;
 
-                code.fill_module((width - 8) + i as u32, 8, color);
+                code.fill_module((side_length - 8) + i as u32, 8, color);
                 if code.is_reserved(8, 8 - (i as u32)) {
                     code.fill_module(8, 8 - (i as u32), color);
                 } else {
                     code.fill_module(8, 8 - (i as u32 + 1), color);
                 }
             }
+
+            // place version information if applicable
+            if self.version >= 7 {
+                let version_string = consts::versions_string(self.version);
+
+                for i in 0..6 {
+                    for j in 0..3 {
+                        code.fill_module(
+                            5 - i,
+                            ((side_length - 1) - 8) - j,
+                            version_string[(i * 3 + j) as usize] != 0,
+                        );
+                        code.fill_module(
+                            ((side_length - 1) - 8) - j,
+                            5 - i,
+                            version_string[(i * 3 + j) as usize] != 0,
+                        );
+                    }
+                }
+            }
+
+            println!("isopen: {}", code.is_open(1, 1));
 
             Ok(code.image())
         }

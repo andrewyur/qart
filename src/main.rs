@@ -1,8 +1,8 @@
 use qart::qr::Code;
 
 fn main() {
-    let code = Code::new(String::from("HI!!!"));
-    let img_res = code.build();
+    let code = Code::new(String::from("HI!!!"), 7);
+    let img_res = code.build(5);
     if let Ok(img) = img_res {
         img.save("code.png").unwrap()
     }
