@@ -6,10 +6,12 @@ implementation of [QArt Code generator](https://research.swtch.com/qr/draw/) in 
 - https://research.swtch.com/field
 - https://research.swtch.com/qart
 - https://www.thonky.com/qr-code-tutorial/
+- https://www.nayuki.io/page/creating-a-qr-code-step-by-step
 
 ## Current Itinerary
-- remove constants + hardcoded variables 
-- support for versions, error checking levels, + masks
+- support for versions 8+
+- better module placement code
+- cleaner debug options + border
 - Image Encoder
   
 ## Long Term Itinerary

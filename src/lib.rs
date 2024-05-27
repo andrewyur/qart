@@ -8,6 +8,8 @@ pub mod qr {
     use crate::img::CodeImg;
     use image::{ImageBuffer, Rgba};
 
+    const DEBUG: bool = false;
+
     fn bytes_to_bits(bytes: &[u8]) -> Vec<u8> {
         bytes
             .iter()
@@ -37,7 +39,7 @@ pub mod qr {
 
     pub struct Code {
         url: String,
-        version: u8,
+        version: u32,
         field: Field,
     }
     // target length is assumed to be less than 256 chars
@@ -47,7 +49,7 @@ pub mod qr {
 
     impl Code {
         // constructor, takes the information to be encoded in the code
-        pub fn new(url: String, version: u8) -> Self {
+        pub fn new(url: String, version: u32) -> Self {
             let field = Field::new();
             Self {
                 url,
@@ -64,10 +66,11 @@ pub mod qr {
             // indicators
             data_bits.extend_from_slice(&consts::MODE_IND);
 
-            let mut char_count_indicator = Vec::with_capacity(consts::CHAR_CT_IND_LEN);
-            let byte = self.url.len() as u8;
+            let char_count_indicator_len = consts::char_count_indicator_len(self.version);
+            let mut char_count_indicator = Vec::with_capacity(char_count_indicator_len);
+            let byte = self.url.len() as u32;
             let mut mask = 1;
-            for _ in 0..consts::CHAR_CT_IND_LEN {
+            for _ in 0..char_count_indicator_len {
                 let bit = ((byte & mask) != 0) as u8;
                 char_count_indicator.insert(0, bit);
                 mask <<= 1;
@@ -98,28 +101,36 @@ pub mod qr {
 
         fn split_and_interleave_bytes(&self, data_bytes: Vec<u8>) -> Vec<u8> {
             // structure final message
-            // qr codes v1-v7 at EC L have only 1 group
 
-            let data_bytes_per_block = consts::data_bytes_per_block(self.version);
-            let ec_bytes_per_block = consts::ec_bytes_per_block(self.version);
-            let number_of_blocks = consts::number_of_blocks(self.version);
+            let number_of_groups = consts::number_of_groups(self.version);
+            let mut code_bytes: Vec<u8> =
+                Vec::with_capacity(consts::total_number_of_bytes(self.version) + 1);
 
-            let mut code_bytes: Vec<u8> = Vec::with_capacity(
-                (data_bytes_per_block + ec_bytes_per_block) * number_of_blocks + 1,
-            );
+            let data_bytes_in_group1 = consts::number_of_blocks(self.version, 1)
+                * consts::data_bytes_per_block(self.version, 1);
 
             // data + interleaving
-            let mut data_blocks = Vec::with_capacity(number_of_blocks);
+            let mut data_blocks = Vec::new();
 
-            for block in 0..number_of_blocks {
-                let start = block * data_bytes_per_block;
-                let end = start + data_bytes_per_block;
-                let data_block = data_bytes[start..end].iter();
+            for group in 0..number_of_groups {
+                let data_bytes_per_block =
+                    consts::data_bytes_per_block(self.version, group as u32 + 1);
+                let number_of_blocks = consts::number_of_blocks(self.version, group as u32 + 1);
 
-                data_blocks.push(data_block);
+                for block in 0..number_of_blocks {
+                    let start = group * data_bytes_in_group1 + block * data_bytes_per_block;
+                    let end = start + data_bytes_per_block;
+                    let data_block = data_bytes[start..end].iter();
+
+                    data_blocks.push(data_block);
+                }
             }
 
-            for _ in 0..data_bytes_per_block {
+            let max_len = data_blocks
+                .iter()
+                .fold(0, |acc, iter| std::cmp::max(acc, iter.len()));
+
+            for _ in 0..max_len {
                 for block in data_blocks.iter_mut() {
                     if let Some(byte) = block.next() {
                         code_bytes.push(*byte);
@@ -128,16 +139,23 @@ pub mod qr {
             }
 
             // error correction + interleaving
+            let mut ec_blocks = Vec::new();
+
+            let ec_bytes_per_block = consts::ec_bytes_per_block(self.version);
             let poly = gf::gen_poly(&self.field, ec_bytes_per_block);
 
-            let mut ec_blocks = Vec::with_capacity(number_of_blocks);
+            for group in 0..number_of_groups {
+                let data_bytes_per_block =
+                    consts::data_bytes_per_block(self.version, group as u32 + 1);
+                let number_of_blocks = consts::number_of_blocks(self.version, group as u32 + 1);
 
-            for block in 0..number_of_blocks {
-                let start = block * data_bytes_per_block;
-                let end = start + data_bytes_per_block;
-                let ec_block = gf::ec_codewords(&self.field, &data_bytes[start..end], &poly);
+                for block in 0..number_of_blocks {
+                    let start = group * data_bytes_in_group1 + block * data_bytes_per_block;
+                    let end = start + data_bytes_per_block;
+                    let ec_block = gf::ec_codewords(&self.field, &data_bytes[start..end], &poly);
 
-                ec_blocks.push(ec_block);
+                    ec_blocks.push(ec_block);
+                }
             }
 
             for i in 0..ec_bytes_per_block {
@@ -147,9 +165,8 @@ pub mod qr {
                     }
                 }
             }
-
             // add remainder bits
-            // code_bytes.push(0);
+            code_bytes.push(0);
 
             code_bytes
         }
@@ -159,8 +176,8 @@ pub mod qr {
             if self.url.chars().any(|x| x >= '\u{00FF}') {
                 return Err(String::from("url cannot be encoded as ISO 8859-1!"));
             }
-            if self.version > 7 || self.version == 0 {
-                return Err(String::from("version must be from 1 to 7!"));
+            if self.version > 40 || self.version == 0 {
+                return Err(String::from("version must be from 1 to 40!"));
             }
 
             // data + ec encoding
@@ -168,13 +185,22 @@ pub mod qr {
 
             let data_bytes = bits_to_bytes(&data_bits);
 
+            if DEBUG {
+                println!("{:02X?}", data_bytes);
+            }
+
             let code_bytes = self.split_and_interleave_bytes(data_bytes);
+
+            if DEBUG {
+                println!("{:02X?}", code_bytes);
+            }
 
             // create the code image
             let side_length = consts::side_len_of_version(self.version);
             let black = Rgba([0, 0, 0, 255]);
             let white = Rgba([255, 255, 255, 255]);
             let reserved = Rgba([0, 0, 255, 255]);
+            let border = 20;
             let mut code = CodeImg::new(
                 module_size,
                 side_length,
@@ -182,6 +208,7 @@ pub mod qr {
                 white,
                 reserved,
                 self.version,
+                border,
             );
 
             // place the data + ec inside the code image
@@ -199,16 +226,12 @@ pub mod qr {
             let mut prev_move = Move::UpRight;
             let mut next_move = Move::Left;
 
-            let debug = false;
             let mut count = 0;
-            let mut save = 0;
+
             for bit in code_bits {
                 count += 1;
 
-                let color = (bit == 1) == ((y + 1) % 2 == 0);
-                if !debug {
-                    code.fill_module(x, y, color);
-                } else {
+                if DEBUG {
                     if ((count - 1) / 8) % 3 == 0 {
                         code.debug(x, y, Rgba([255, 0, 0, 255]))
                     } else if ((count - 1) / 8) % 3 == 1 {
@@ -216,20 +239,15 @@ pub mod qr {
                     } else {
                         code.debug(x, y, Rgba([0, 0, 255, 255]))
                     }
-                }
-
-                if save > 0 {
-                    if save == 1 {
-                        code.save();
-                        save = 0;
-                    } else {
-                        save -= 1;
-                    }
+                } else {
+                    let color = (bit == 1) == ((y + 1) % 2 == 0);
+                    code.fill_module(x, y, color);
                 }
 
                 match next_move {
                     Move::Left => {
                         if x != 0 && !code.is_open(x - 1, y) {
+                            code.save();
                             return Err(format!("No valid moves! at ({},{})", x, y));
                         }
                         x -= 1;
@@ -286,6 +304,7 @@ pub mod qr {
                             next_move = Move::Left;
                             prev_move = Move::Left;
                         } else {
+                            code.save();
                             return Err(format!("No valid moves! at ({},{})", x, y));
                         }
                     }
@@ -295,13 +314,17 @@ pub mod qr {
                             y += 1;
                             next_move = Move::Left;
                             prev_move = Move::DownRight;
+                        } else if code.is_open(x, y + 1) {
+                            y += 1;
+                            prev_move = Move::DownRight;
+                            next_move = Move::DownRight;
                         } else if code.is_open(x + 1, y + 2) {
                             x += 1;
                             y += 2;
                             next_move = Move::Left;
                             prev_move = Move::DownRight;
-                        } else if code.is_open(x, y + 1) {
-                            y += 1;
+                        } else if code.is_open(x, y + 2) {
+                            y += 2;
                             prev_move = Move::DownRight;
                             next_move = Move::DownRight;
                         } else if code.is_open(x + 1, y + 6) {
@@ -323,15 +346,10 @@ pub mod qr {
                         }
                     }
                 };
-                // if count % 8 == 0 {
-                //     std::thread::sleep(std::time::Duration::from_millis(1000));
-                //     code.save();
-                //     println!("count: {}", count);
-                // }
             }
 
             // place format information
-            let format_string = consts::format_string(self.version);
+            let format_string = consts::FORMAT_STRING;
 
             for (i, bit) in format_string[..7].iter().enumerate() {
                 let color = *bit == 1;
@@ -352,28 +370,6 @@ pub mod qr {
                     code.fill_module(8, 8 - (i as u32 + 1), color);
                 }
             }
-
-            // place version information if applicable
-            if self.version >= 7 {
-                let version_string = consts::versions_string(self.version);
-
-                for i in 0..6 {
-                    for j in 0..3 {
-                        code.fill_module(
-                            5 - i,
-                            ((side_length - 1) - 8) - j,
-                            version_string[(i * 3 + j) as usize] != 0,
-                        );
-                        code.fill_module(
-                            ((side_length - 1) - 8) - j,
-                            5 - i,
-                            version_string[(i * 3 + j) as usize] != 0,
-                        );
-                    }
-                }
-            }
-
-            println!("isopen: {}", code.is_open(1, 1));
 
             Ok(code.image())
         }

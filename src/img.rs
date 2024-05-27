@@ -8,6 +8,7 @@ pub struct CodeImg {
     black: Rgba<u8>,
     white: Rgba<u8>,
     reserved: Rgba<u8>,
+    border: u32,
 }
 
 impl CodeImg {
@@ -16,7 +17,7 @@ impl CodeImg {
     }
 
     pub fn save(&self) {
-        self.img.save("template.png");
+        self.img.save("debug.png").unwrap();
     }
 
     // true = black, false = white
@@ -25,8 +26,8 @@ impl CodeImg {
         for px in 0..self.module_size {
             for py in 0..self.module_size {
                 self.img.put_pixel(
-                    mx * self.module_size + px,
-                    my * self.module_size + py,
+                    self.border + mx * self.module_size + px,
+                    self.border + my * self.module_size + py,
                     color,
                 );
             }
@@ -37,14 +38,14 @@ impl CodeImg {
             for py in 0..self.module_size {
                 if px != 0 && px != self.module_size - 1 && py != 0 && py != self.module_size - 1 {
                     self.img.put_pixel(
-                        mx * self.module_size + px,
-                        my * self.module_size + py,
+                        self.border + mx * self.module_size + px,
+                        self.border + my * self.module_size + py,
                         color,
                     );
                 } else {
                     self.img.put_pixel(
-                        mx * self.module_size + px,
-                        my * self.module_size + py,
+                        self.border + mx * self.module_size + px,
+                        self.border + my * self.module_size + py,
                         self.white,
                     );
                 }
@@ -55,18 +56,24 @@ impl CodeImg {
         for px in 0..self.module_size {
             for py in 0..self.module_size {
                 self.img.put_pixel(
-                    mx * self.module_size + px,
-                    my * self.module_size + py,
+                    self.border + mx * self.module_size + px,
+                    self.border + my * self.module_size + py,
                     self.reserved,
                 );
             }
         }
     }
     pub fn is_open(&self, mx: u32, my: u32) -> bool {
-        if let Some(p) = self
-            .img
-            .get_pixel_checked(mx * self.module_size, my * self.module_size)
-        {
+        if self.border + mx * self.module_size >= self.img.width() - self.border {
+            return false;
+        }
+        if self.border + my * self.module_size >= self.img.height() - self.border {
+            return false;
+        }
+        if let Some(p) = self.img.get_pixel_checked(
+            self.border + mx * self.module_size,
+            self.border + my * self.module_size,
+        ) {
             if p[3] == 0 {
                 return true;
             }
@@ -74,10 +81,10 @@ impl CodeImg {
         false
     }
     pub fn is_reserved(&self, mx: u32, my: u32) -> bool {
-        if let Some(p) = self
-            .img
-            .get_pixel_checked(mx * self.module_size, my * self.module_size)
-        {
+        if let Some(p) = self.img.get_pixel_checked(
+            self.border + mx * self.module_size,
+            self.border + my * self.module_size,
+        ) {
             if *p == self.reserved {
                 return true;
             }
@@ -90,14 +97,19 @@ impl CodeImg {
         black: Rgba<u8>,
         white: Rgba<u8>,
         reserved: Rgba<u8>,
-        version: u8,
+        version: u32,
+        border: u32,
     ) -> Self {
         let mut code = CodeImg {
-            img: ImageBuffer::new(side_length * module_size, side_length * module_size),
+            img: ImageBuffer::new(
+                side_length * module_size + 2 * border,
+                side_length * module_size + 2 * border,
+            ),
             module_size,
             black,
             white,
             reserved,
+            border,
         };
 
         // add finder patterns + separators
@@ -114,22 +126,30 @@ impl CodeImg {
             }
         }
 
+        // fill in border
+        for i in 0..(code.img.width()) {
+            for j in 0..border {
+                code.img.put_pixel(i, j, code.white);
+                code.img.put_pixel(j, i, code.white);
+                code.img
+                    .put_pixel(i, (code.img.width() - 1) - j, code.white);
+                code.img
+                    .put_pixel((code.img.width() - 1) - j, i, code.white);
+            }
+        }
+
         // add alignment patterns
 
-        if version > 1 {
-            let (distance, number) = consts::pattern_locations(version);
+        let pattern_locations = consts::pattern_locations(version);
 
-            let patterns_iter = (0..number).map(|x| x * distance + 6);
-
-            for col in patterns_iter.clone() {
-                for row in patterns_iter.clone() {
-                    if code.is_open(col, row) {
-                        for x in 0..5 {
-                            for y in 0..5 {
-                                let color = !(((x == 1 || x == 3) && (y >= 1 && y <= 3))
-                                    || ((y == 1 || y == 3) && (x >= 1 && x <= 3)));
-                                code.fill_module((col - 2) + x, (row - 2) + y, color);
-                            }
+        for col in pattern_locations.iter() {
+            for row in pattern_locations.iter() {
+                if code.is_open(*col, *row) {
+                    for x in 0..5 {
+                        for y in 0..5 {
+                            let color = !(((x == 1 || x == 3) && (y >= 1 && y <= 3))
+                                || ((y == 1 || y == 3) && (x >= 1 && x <= 3)));
+                            code.fill_module((*col - 2) + x, (*row - 2) + y, color);
                         }
                     }
                 }
@@ -160,16 +180,25 @@ impl CodeImg {
             }
         }
 
-        // reserve version information area if applicable
-        if version > 6 {
-            for i in 0..3 {
-                for j in 0..6 {
-                    code.reserve(j, ((side_length - 1) - 8) - i);
-                    code.reserve(((side_length - 1) - 8) - i, j);
+        // place version information if applicable
+        if version >= 7 {
+            let version_string = consts::versions_string(version);
+
+            for i in 0..6 {
+                for j in 0..3 {
+                    code.fill_module(
+                        5 - i,
+                        ((side_length - 1) - 8) - j,
+                        version_string[(i * 3 + j) as usize] != 0,
+                    );
+                    code.fill_module(
+                        ((side_length - 1) - 8) - j,
+                        5 - i,
+                        version_string[(i * 3 + j) as usize] != 0,
+                    );
                 }
             }
         }
-
         // code.img.save("template.png").unwrap();
         // panic!("stopped.");
 

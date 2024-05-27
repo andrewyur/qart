@@ -1,10 +1,11 @@
 use qart::qr::Code;
 
 fn main() {
-    let code = Code::new(String::from("HI!!!"), 7);
+    let code = Code::new(String::from("HI!!!"), 40);
     let img_res = code.build(5);
-    if let Ok(img) = img_res {
-        img.save("code.png").unwrap()
+    match img_res {
+        Ok(img) => img.save("code.png").unwrap(),
+        Err(s) => println!("{}", s),
     }
 
     // let img_width = 300;
