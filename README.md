@@ -16,8 +16,8 @@ implementation of [QArt Code generator](https://research.swtch.com/qr/draw/) in 
       - called thresholding
       - no function in image crate, will have to automate, or provide slider to user
   - encoding in url fragment
-  - encoding in data pixels
-  - encoding in 
+  - encoding in error correction modules
+  - encoding in data modules (?)
 
   
 ## Long Term Itinerary
