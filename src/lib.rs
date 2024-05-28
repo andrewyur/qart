@@ -1,28 +1,33 @@
 mod consts;
+mod cursor;
 mod gf;
 mod img;
 
 pub mod qr {
-    use crate::consts;
+    use crate::consts::{self, required_data_bits};
+    use crate::cursor::Cursor;
     use crate::gf::{self, Field};
     use crate::img::CodeImg;
-    use image::{ImageBuffer, Rgba};
+    use image::{ImageBuffer, Pixel, Rgba};
 
     const DEBUG: bool = false;
+    // extend url with 0xff instead of padding bytes
+    // phone cannot scan past v12
+    const PAD: bool = false;
 
-    fn bytes_to_bits(bytes: &[u8]) -> Vec<u8> {
-        bytes
-            .iter()
-            .fold(Vec::with_capacity(bytes.len() * 8), |mut v, byte| {
-                let mut mask = 0b10000000;
-                for _ in 0..8 {
-                    let bit = ((byte & mask) != 0) as u8;
-                    v.push(bit);
-                    mask >>= 1;
-                }
-                v
-            })
-    }
+    // fn bytes_to_bits(bytes: &[u8]) -> Vec<u8> {
+    //     bytes
+    //         .iter()
+    //         .fold(Vec::with_capacity(bytes.len() * 8), |mut v, byte| {
+    //             let mut mask = 0b10000000;
+    //             for _ in 0..8 {
+    //                 let bit = ((byte & mask) != 0) as u8;
+    //                 v.push(bit);
+    //                 mask >>= 1;
+    //             }
+    //             v
+    //         })
+    // }
     fn bits_to_bytes(bytes: &[u8]) -> Vec<u8> {
         (0..(bytes.len() / 8)).fold(Vec::with_capacity(bytes.len() / 8), |mut v, i| {
             let i = i * 8;
@@ -45,7 +50,6 @@ pub mod qr {
     // target length is assumed to be less than 256 chars
     // error correction is assumed to be L
     // encoding is assumed to be binary (!TODO)
-    // version number is decided by build (version 6)(!TODO)
 
     impl Code {
         // constructor, takes the information to be encoded in the code
@@ -62,13 +66,18 @@ pub mod qr {
             // see https://www.thonky.com/qr-code-tutorial
             let required_data_bits = consts::required_data_bits(self.version);
             let mut data_bits: Vec<u8> = Vec::with_capacity(required_data_bits);
+            let char_capacity = consts::char_capacity(self.version);
 
             // indicators
             data_bits.extend_from_slice(&consts::MODE_IND);
 
             let char_count_indicator_len = consts::char_count_indicator_len(self.version);
             let mut char_count_indicator = Vec::with_capacity(char_count_indicator_len);
-            let byte = self.url.len() as u32;
+            let byte = if PAD {
+                self.url.len() as u32
+            } else {
+                char_capacity as u32
+            };
             let mut mask = 1;
             for _ in 0..char_count_indicator_len {
                 let bit = ((byte & mask) != 0) as u8;
@@ -84,91 +93,65 @@ pub mod qr {
                 }
             });
 
+            if !PAD {
+                // after this byte, even if you place a byte that corresponds to the unicode for a
+                // character valid in a url, it wont show in the decoded url.
+                data_bits.extend_from_slice(&[0, 0, 0, 0, 0, 0, 0, 0]);
+                for _ in (self.url.len() - 2)..char_capacity {
+                    data_bits.extend_from_slice(&[0, 0, 0, 0, 0, 0, 0, 0]);
+                }
+            }
+
             // terminator bits
             data_bits.extend_from_slice(&[0, 0, 0, 0]);
 
             assert!(data_bits.len() % 8 == 0);
 
-            //padding
-            let mut i = 0;
-            while data_bits.len() < required_data_bits {
-                let byte = consts::pad_bytes(i);
-                data_bits.extend_from_slice(&byte);
-                i += 1;
+            if PAD {
+                let mut i = 0;
+                while data_bits.len() < required_data_bits {
+                    let byte = consts::pad_bytes(i);
+                    data_bits.extend_from_slice(&byte);
+                    i += 1;
+                }
             }
             data_bits
         }
 
-        fn split_and_interleave_bytes(&self, data_bytes: Vec<u8>) -> Vec<u8> {
-            // structure final message
-
+        fn gen_data<'a>(&self, data_bytes: &'a mut Vec<u8>) -> Vec<&'a mut [u8]> {
             let number_of_groups = consts::number_of_groups(self.version);
-            let mut code_bytes: Vec<u8> =
-                Vec::with_capacity(consts::total_number_of_bytes(self.version) + 1);
 
-            let data_bytes_in_group1 = consts::number_of_blocks(self.version, 1)
-                * consts::data_bytes_per_block(self.version, 1);
+            let mut data_blocks = Vec::with_capacity(consts::total_blocks(self.version));
 
-            // data + interleaving
-            let mut data_blocks = Vec::new();
+            let mut rest = &mut data_bytes[..];
 
             for group in 0..number_of_groups {
                 let data_bytes_per_block =
                     consts::data_bytes_per_block(self.version, group as u32 + 1);
                 let number_of_blocks = consts::number_of_blocks(self.version, group as u32 + 1);
 
-                for block in 0..number_of_blocks {
-                    let start = group * data_bytes_in_group1 + block * data_bytes_per_block;
-                    let end = start + data_bytes_per_block;
-                    let data_block = data_bytes[start..end].iter();
+                for _block in 0..number_of_blocks {
+                    let (data_block, slice) = rest.split_at_mut(data_bytes_per_block);
+                    rest = slice;
 
                     data_blocks.push(data_block);
                 }
             }
 
-            let max_len = data_blocks
-                .iter()
-                .fold(0, |acc, iter| std::cmp::max(acc, iter.len()));
+            data_blocks
+        }
 
-            for _ in 0..max_len {
-                for block in data_blocks.iter_mut() {
-                    if let Some(byte) = block.next() {
-                        code_bytes.push(*byte);
-                    }
-                }
-            }
-
-            // error correction + interleaving
-            let mut ec_blocks = Vec::new();
-
+        fn gen_ec(&self, data_blocks: &Vec<&mut [u8]>) -> Vec<Vec<u8>> {
             let ec_bytes_per_block = consts::ec_bytes_per_block(self.version);
             let poly = gf::gen_poly(&self.field, ec_bytes_per_block);
 
-            for group in 0..number_of_groups {
-                let data_bytes_per_block =
-                    consts::data_bytes_per_block(self.version, group as u32 + 1);
-                let number_of_blocks = consts::number_of_blocks(self.version, group as u32 + 1);
+            let mut ec_blocks = Vec::with_capacity(data_blocks.len());
 
-                for block in 0..number_of_blocks {
-                    let start = group * data_bytes_in_group1 + block * data_bytes_per_block;
-                    let end = start + data_bytes_per_block;
-                    let ec_block = gf::ec_codewords(&self.field, &data_bytes[start..end], &poly);
-
-                    ec_blocks.push(ec_block);
-                }
+            for block in data_blocks {
+                ec_blocks.push(gf::ec_codewords(&self.field, *block, &poly));
             }
 
-            for i in 0..ec_bytes_per_block {
-                for block in ec_blocks.iter() {
-                    if let Some(byte) = block.get(i) {
-                        code_bytes.push(*byte);
-                    }
-                }
-            }
-            // add remainder bits
-            code_bytes.push(0);
-
-            code_bytes
+            ec_blocks
         }
 
         pub fn build(&self, module_size: u32) -> Result<ImageBuffer<Rgba<u8>, Vec<u8>>, String> {
@@ -182,17 +165,10 @@ pub mod qr {
 
             // data + ec encoding
             let data_bits = self.encode_chars_to_bits();
-
-            let data_bytes = bits_to_bytes(&data_bits);
-
-            if DEBUG {
-                println!("{:02X?}", data_bytes);
-            }
-
-            let code_bytes = self.split_and_interleave_bytes(data_bytes);
+            let mut data_bytes = bits_to_bytes(&data_bits);
 
             if DEBUG {
-                println!("{:02X?}", code_bytes);
+                println!("{:02X?}  ////", data_bytes);
             }
 
             // create the code image
@@ -211,141 +187,89 @@ pub mod qr {
                 border,
             );
 
-            // place the data + ec inside the code image
-            let mut x = side_length - 1;
-            let mut y = side_length - 1;
+            let mut debug_colors = vec![
+                Rgba([240, 75, 75, 255]),
+                Rgba([240, 240, 75, 255]),
+                Rgba([75, 240, 75, 255]),
+                Rgba([75, 240, 240, 255]),
+                Rgba([75, 75, 240, 255]),
+                Rgba([240, 75, 240, 255]),
+            ];
 
-            let code_bits = bytes_to_bits(&code_bytes);
+            // create the code image navigator
+            let mut cursor = Cursor::new(&mut code, side_length);
 
-            enum Move {
-                Left,
-                UpRight,
-                DownRight,
+            let mut data_blocks = self.gen_data(&mut data_bytes);
+            let mut data_block_iters: Vec<_> = data_blocks
+                .iter_mut()
+                .map(|slice_ref| slice_ref.iter_mut())
+                .collect();
+
+            for byte_i in 0..required_data_bits(self.version) {
+                let mut mask = 0b10000000;
+                let iter_i = byte_i % data_block_iters.len();
+                if let Some(byte) = data_block_iters[iter_i].next() {
+                    if DEBUG {
+                        print!("{:02X} ", byte);
+                    }
+                    for _ in 0..8 {
+                        let bit = ((*byte & mask) != 0) == ((cursor.y + 1) % 2 == 0);
+                        mask >>= 1;
+
+                        if DEBUG {
+                            cursor.place_debug(debug_colors[iter_i % 6]);
+                        } else {
+                            cursor.place(bit);
+                        }
+
+                        if !cursor.next()? {
+                            return Err(format!(
+                                "Premature ending in module placement, at ({}, {})",
+                                cursor.x, cursor.y
+                            ));
+                        }
+                    }
+                }
             }
 
-            let mut prev_move = Move::UpRight;
-            let mut next_move = Move::Left;
+            debug_colors.iter_mut().for_each(|color_ref| {
+                color_ref.apply_without_alpha(|pix| if pix != 0 { pix - 64 } else { pix })
+            });
 
-            let mut count = 0;
+            let mut ec_blocks = self.gen_ec(&data_blocks);
+            let mut ec_block_iters: Vec<_> = ec_blocks
+                .iter_mut()
+                .map(|slice_ref| (*slice_ref).iter_mut())
+                .collect();
 
-            for bit in code_bits {
-                count += 1;
+            let mut cursor_result = true;
 
-                if DEBUG {
-                    if ((count - 1) / 8) % 3 == 0 {
-                        code.debug(x, y, Rgba([255, 0, 0, 255]))
-                    } else if ((count - 1) / 8) % 3 == 1 {
-                        code.debug(x, y, Rgba([0, 255, 0, 255]))
-                    } else {
-                        code.debug(x, y, Rgba([0, 0, 255, 255]))
+            let ec_bytes_len = ec_block_iters.len() * consts::ec_bytes_per_block(self.version);
+            for byte_i in 0..ec_bytes_len {
+                let mut mask = 0b10000000;
+                let iter_i = byte_i % ec_block_iters.len();
+                if let Some(byte) = ec_block_iters[iter_i].next() {
+                    if DEBUG {
+                        print!("{:02X} ", byte);
                     }
-                } else {
-                    let color = (bit == 1) == ((y + 1) % 2 == 0);
-                    code.fill_module(x, y, color);
-                }
+                    for _ in 0..8 {
+                        let bit = ((*byte & mask) != 0) == ((cursor.y + 1) % 2 == 0);
+                        mask >>= 1;
 
-                match next_move {
-                    Move::Left => {
-                        if x != 0 && !code.is_open(x - 1, y) {
-                            code.save();
-                            return Err(format!("No valid moves! at ({},{})", x, y));
-                        }
-                        x -= 1;
-                        match prev_move {
-                            Move::Left => {
-                                if y != 0 && code.is_open(x + 1, y - 1) {
-                                    next_move = Move::UpRight;
-                                } else {
-                                    next_move = Move::DownRight;
-                                }
-                                prev_move = Move::Left;
-                            }
-                            other_move => {
-                                next_move = other_move;
-                                prev_move = Move::Left;
-                            }
-                        }
-                    }
-                    Move::UpRight => {
-                        if y != 0 && code.is_open(x + 1, y - 1) {
-                            x += 1;
-                            y -= 1;
-                            next_move = Move::Left;
-                            prev_move = Move::UpRight;
-                        } else if y >= 1 && code.is_open(x, y - 1) {
-                            y -= 1;
-                            next_move = Move::UpRight;
-                            prev_move = Move::UpRight;
-                        } else if y >= 2 && code.is_open(x + 1, y - 2) {
-                            x += 1;
-                            y -= 2;
-                            next_move = Move::Left;
-                            prev_move = Move::UpRight;
-                        } else if y >= 2 && code.is_open(x, y - 2) {
-                            y -= 2;
-                            next_move = Move::UpRight;
-                            prev_move = Move::UpRight;
-                        } else if y >= 6 && code.is_open(x + 1, y - 6) {
-                            x += 1;
-                            y -= 6;
-                            next_move = Move::Left;
-                            prev_move = Move::UpRight;
-                        } else if y >= 7 && x >= 2 && code.is_open(x - 2, y - 7) {
-                            x -= 2;
-                            y -= 7;
-                            next_move = Move::DownRight;
-                            prev_move = Move::DownRight;
-                        } else if x >= 1 && code.is_open(x - 1, y) {
-                            x -= 1;
-                            next_move = Move::Left;
-                            prev_move = Move::Left;
-                        } else if x >= 2 && code.is_open(x - 2, y) {
-                            x -= 2;
-                            next_move = Move::Left;
-                            prev_move = Move::Left;
+                        if DEBUG {
+                            cursor.place_debug(debug_colors[iter_i % 6]);
                         } else {
-                            code.save();
-                            return Err(format!("No valid moves! at ({},{})", x, y));
+                            cursor.place(bit);
                         }
-                    }
-                    Move::DownRight => {
-                        if code.is_open(x + 1, y + 1) {
-                            x += 1;
-                            y += 1;
-                            next_move = Move::Left;
-                            prev_move = Move::DownRight;
-                        } else if code.is_open(x, y + 1) {
-                            y += 1;
-                            prev_move = Move::DownRight;
-                            next_move = Move::DownRight;
-                        } else if code.is_open(x + 1, y + 2) {
-                            x += 1;
-                            y += 2;
-                            next_move = Move::Left;
-                            prev_move = Move::DownRight;
-                        } else if code.is_open(x, y + 2) {
-                            y += 2;
-                            prev_move = Move::DownRight;
-                            next_move = Move::DownRight;
-                        } else if code.is_open(x + 1, y + 6) {
-                            x += 1;
-                            y += 6;
-                            next_move = Move::Left;
-                            prev_move = Move::DownRight;
-                        } else if x >= 1 && code.is_open(x - 1, y) {
-                            x -= 1;
-                            next_move = Move::Left;
-                            prev_move = Move::Left;
-                        } else if x >= 1 && y >= 8 && code.is_open(x - 1, y - 8) {
-                            x -= 1;
-                            y -= 8;
-                            next_move = Move::Left;
-                            prev_move = Move::Left;
-                        } else {
-                            break;
-                        }
+
+                        cursor_result = cursor.next()?
                     }
                 };
+            }
+
+            while cursor_result {
+                cursor.place((cursor.y + 1) % 2 == 0);
+                cursor_result = cursor.next()?
             }
 
             // place format information

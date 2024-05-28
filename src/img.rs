@@ -36,19 +36,19 @@ impl CodeImg {
     pub fn debug(&mut self, mx: u32, my: u32, color: Rgba<u8>) {
         for px in 0..self.module_size {
             for py in 0..self.module_size {
-                if px != 0 && px != self.module_size - 1 && py != 0 && py != self.module_size - 1 {
-                    self.img.put_pixel(
-                        self.border + mx * self.module_size + px,
-                        self.border + my * self.module_size + py,
-                        color,
-                    );
-                } else {
-                    self.img.put_pixel(
-                        self.border + mx * self.module_size + px,
-                        self.border + my * self.module_size + py,
-                        self.white,
-                    );
-                }
+                // if px != 0 && px != self.module_size - 1 && py != 0 && py != self.module_size - 1 {
+                // } else {
+                //     self.img.put_pixel(
+                //         self.border + mx * self.module_size + px,
+                //         self.border + my * self.module_size + py,
+                //         self.black,
+                //     );
+                // }
+                self.img.put_pixel(
+                    self.border + mx * self.module_size + px,
+                    self.border + my * self.module_size + py,
+                    color,
+                );
             }
         }
     }

@@ -9,10 +9,16 @@ implementation of [QArt Code generator](https://research.swtch.com/qr/draw/) in 
 - https://www.nayuki.io/page/creating-a-qr-code-step-by-step
 
 ## Current Itinerary
-- support for versions 8+
-- better module placement code
-- cleaner debug options + border
 - Image Encoder
+  - ~~process target image~~ can wait
+    - shrink image down to dimensions of target qr code
+    - black and white
+      - called thresholding
+      - no function in image crate, will have to automate, or provide slider to user
+  - encoding in url fragment
+  - encoding in data pixels
+  - encoding in 
+
   
 ## Long Term Itinerary
 - benchmarking

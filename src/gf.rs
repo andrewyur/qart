@@ -29,13 +29,13 @@ impl Field {
     }
 
     // slice of 2^e values in the field
-    pub fn exp(&self) -> [u8; 510] {
-        self.exp.to_owned()
+    pub fn exp(&self) -> &[u8] {
+        &self.exp
     }
 
     // slice of log2 e values in the field
-    pub fn log(&self) -> [u8; 256] {
-        self.log.to_owned()
+    pub fn log(&self) -> &[u8] {
+        &self.log
     }
 }
 
@@ -79,7 +79,7 @@ pub fn gen_poly(f: &Field, n: usize) -> Vec<u8> {
     gen
 }
 
-// generates (gen.len() - 1) error correcting bits for message mes, using Field f and generator polynomial gen
+// generates (gen.len() - 1) error correcting bytes for message mes, using Field f and generator polynomial gen
 pub fn ec_codewords(f: &Field, mes: &[u8], gen: &[u8]) -> Vec<u8> {
     let exp = f.exp();
     let log = f.log();
