@@ -4,16 +4,28 @@ pub const fn side_len_of_version(version: u32) -> u32 {
     version * 4 + 17
 }
 
-/// For byte mode
-pub const MODE_IND: [u8; 4] = [0, 1, 0, 0];
+pub const BYTE_MODE_IND: [u8; 4] = [0, 1, 0, 0];
+
+pub const NUM_MODE_IND: [u8; 4] = [0, 0, 0, 1];
 
 /// For byte mode, all versions (1-40)
-pub const fn char_count_indicator_len(version: u32) -> usize {
+pub const fn char_count_indicator_len_byte(version: u32) -> usize {
     assert!(version < 41);
     if version < 10 {
         8
     } else {
         16
+    }
+}
+
+pub const fn char_count_indicator_len_num(version: u32) -> usize {
+    assert!(version < 41);
+    if version < 10 {
+        10
+    } else if version < 27 {
+        12
+    } else {
+        14
     }
 }
 

@@ -8,6 +8,11 @@ implementation of [QArt Code generator](https://research.swtch.com/qr/draw/) in 
 - https://www.thonky.com/qr-code-tutorial/
 - https://www.nayuki.io/page/creating-a-qr-code-step-by-step
 
+## Other Implementations
+- https://github.com/rsc/qr
+- https://github.com/dieforfree/qart4j
+- https://github.com/7sDream/pyqart
+
 ## Current Itinerary
 - Image Encoder
   - ~~process target image~~ can wait
