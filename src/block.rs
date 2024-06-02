@@ -1,8 +1,8 @@
+// This struct comes from the bitblock struct in the other implementations, allows for editing of ec modules without corrupting data
 use crate::{
     arrs::{BitArr, BitArrMethods, ByteArr, ByteArrMethods},
     gf::{self, Field},
 };
-// This struct comes from the bitblock struct in the other implementations
 
 const CHECK: bool = true;
 
@@ -190,20 +190,26 @@ impl<'a> Block<'a> {
         }
     }
 
-    pub fn iter_data<'b>(&'b self) -> impl Iterator<Item = (usize, u8)> + 'b {
-        BlockIter::new(self, 0, self.num_data_bytes * 8).enumerate()
-    }
-
-    pub fn iter_ec<'b>(&'b self) -> impl Iterator<Item = (usize, u8)> + 'b {
-        BlockIter::new(self, self.num_data_bytes * 8, self.block_bytes.len() * 8)
-            .enumerate()
-            .map(move |(i, bit)| (self.num_data_bytes * 8 + i, bit))
-    }
-
     pub fn iter_nums<'b>(&'b self) -> impl Iterator<Item = (usize, u8)> + 'b {
         BlockIter::new(self, self.numeric_data_start, self.numeric_data_end)
             .enumerate()
             .map(move |(i, bit)| (self.numeric_data_start + i, bit))
+    }
+
+    pub fn iter_data_ec<'b>(
+        &'b self,
+    ) -> (
+        Box<dyn Iterator<Item = (usize, u8)> + 'b>,
+        Box<dyn Iterator<Item = (usize, u8)> + 'b>,
+    ) {
+        (
+            Box::new(BlockIter::new(self, 0, self.num_data_bytes * 8).enumerate()),
+            Box::new(
+                BlockIter::new(self, self.num_data_bytes * 8, self.block_bytes.len() * 8)
+                    .enumerate()
+                    .map(move |(i, bit)| (self.num_data_bytes * 8 + i, bit)),
+            ),
+        )
     }
 
     pub fn ret(self) -> ByteArr {

@@ -1,6 +1,6 @@
-use image::{ImageBuffer, Rgba};
-
+// a struct to abstract placement of individual pixels, allowing its user to only think about placement of modules
 use crate::consts;
+use image::{ImageBuffer, Rgba};
 
 pub struct CodeImg {
     img: ImageBuffer<Rgba<u8>, Vec<u8>>,
@@ -164,6 +164,7 @@ impl CodeImg {
             }
         }
 
+        // TODO: modules are being reserved here and then immediately colored over
         // add dark module and reserved areas
         for i in 0..9 {
             if code.is_open(i, 8) {
@@ -177,6 +178,29 @@ impl CodeImg {
                     code.reserve(8, (side_length - 1) - i);
                 };
                 code.reserve((side_length - 1) - i, 8);
+            }
+        }
+
+        // place format information
+        let format_string = consts::FORMAT_STRING;
+
+        for (i, bit) in format_string[..7].iter().enumerate() {
+            let color = *bit == 1;
+            code.fill_module(8, (side_length - 1) - i as u32, color);
+            if code.is_reserved(i as u32, 8) {
+                code.fill_module(i as u32, 8, color);
+            } else {
+                code.fill_module(i as u32 + 1, 8, color);
+            }
+        }
+        for (i, bit) in format_string[7..].iter().enumerate() {
+            let color = *bit == 1;
+
+            code.fill_module((side_length - 8) + i as u32, 8, color);
+            if code.is_reserved(8, 8 - (i as u32)) {
+                code.fill_module(8, 8 - (i as u32), color);
+            } else {
+                code.fill_module(8, 8 - (i as u32 + 1), color);
             }
         }
 
@@ -199,9 +223,6 @@ impl CodeImg {
                 }
             }
         }
-        // code.img.save("template.png").unwrap();
-        // panic!("stopped.");
-
         code
     }
 }

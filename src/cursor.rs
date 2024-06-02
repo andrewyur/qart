@@ -1,6 +1,6 @@
+// abstracts navigating the qr code when placing modules
 use crate::img::CodeImg;
 
-// for navigating the code when placing data
 pub struct Cursor<'a> {
     // these should only be changed by the struct itsself
     pub x: u32,
@@ -28,6 +28,7 @@ impl<'a> Cursor<'a> {
         }
     }
     pub fn next(&mut self) -> Result<bool, String> {
+        // TODO: This code is ugly and unintuitive, see https://www.pclviewer.com/rs2/qrtopology.htm
         match self.next_move {
             Move::Left => {
                 if self.x != 0 && !self.code.is_open(self.x - 1, self.y) {

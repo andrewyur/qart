@@ -1,3 +1,5 @@
+// constants values used when creating qr codes
+
 /// For all versions (1-40)
 pub const fn side_len_of_version(version: u32) -> u32 {
     assert!(version < 41);
@@ -38,15 +40,6 @@ pub const fn required_data_bits(version: u32) -> usize {
         2306, 2434, 2566, 2702, 2812, 2956,
     ];
     data_bytes[version as usize - 1] * 8
-}
-
-/// Given number of padding bytes added, returns the padding byte to add next.
-pub const fn pad_bytes(i: usize) -> [u8; 8] {
-    if i % 2 == 0 {
-        [1, 1, 1, 0, 1, 1, 0, 0]
-    } else {
-        [0, 0, 0, 1, 0, 0, 0, 1]
-    }
 }
 
 // qr codes with more than 2 data groups are not covered.
@@ -110,19 +103,7 @@ pub const fn number_of_groups(version: u32) -> usize {
     }
 }
 
-// /// For error correction level L, all versions (1-40)
-// pub const fn total_number_of_bytes(version: u32) -> usize {
-//     assert!(version < 41);
-//     number_of_blocks(version, 1) * (data_bytes_per_block(version, 1) + ec_bytes_per_block(version))
-//         + if number_of_groups(version) == 2 {
-//             number_of_blocks(version, 2)
-//                 * (data_bytes_per_block(version, 2) + ec_bytes_per_block(version))
-//         } else {
-//             0
-//         }
-// }
-
-// this is bad
+// TODO: this is bad
 /// For all versions (1-40)
 pub fn pattern_locations(version: u32) -> Vec<u32> {
     assert!(version < 41);
@@ -214,16 +195,6 @@ pub const fn versions_string(version: u32) -> [u8; 18] {
         [1, 0, 1, 0, 0, 0, 1, 1, 0, 0, 0, 1, 1, 0, 1, 0, 0, 1],
     ];
     version_strings[version as usize - 7]
-}
-
-/// For error correction level L, all versions (1-40)
-pub const fn char_capacity(version: u32) -> usize {
-    let capacities = [
-        17, 32, 53, 78, 106, 134, 154, 192, 230, 271, 321, 367, 425, 458, 520, 586, 644, 718, 792,
-        858, 929, 1003, 1091, 1171, 1273, 1367, 1465, 1528, 1628, 1732, 1840, 1952, 2068, 2188,
-        2303, 2431, 2563, 2699, 2809, 2953,
-    ];
-    capacities[version as usize - 1]
 }
 
 /// For error correction level L, all versions (1-40)

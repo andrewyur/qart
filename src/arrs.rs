@@ -1,3 +1,5 @@
+// type aliases to distinguish between arrays of bits and arrays of bytes, and conversion + qol methods
+
 pub type ByteArr = Vec<u8>;
 pub trait ByteArrMethods {
     fn bit_at(&self, index: usize) -> u8;
@@ -21,7 +23,7 @@ impl ByteArrMethods for ByteArr {
     }
 }
 
-pub type BitArr = Vec<Module>;
+pub type BitArr = Vec<Bit>;
 pub trait BitArrMethods {
     fn extend_bits(&mut self, bits: &[u8], role: Role);
     fn extend_bytes(&mut self, bytes: &[u8], role: Role);
@@ -29,7 +31,7 @@ pub trait BitArrMethods {
 }
 impl BitArrMethods for BitArr {
     fn extend_bits(&mut self, bits: &[u8], role: Role) {
-        let iter = bits.iter().map(|b| Module { val: *b == 1, role });
+        let iter = bits.iter().map(|b| Bit { val: *b == 1, role });
         self.extend(iter);
     }
     fn extend_bytes(&mut self, bytes: &[u8], role: Role) {
@@ -37,7 +39,7 @@ impl BitArrMethods for BitArr {
             let mut mask = 0b10000000;
             for _ in 0..8 {
                 let bit = ((byte & mask) != 0) as u8;
-                self.push(Module {
+                self.push(Bit {
                     val: bit == 1,
                     role,
                 });
@@ -62,7 +64,7 @@ impl BitArrMethods for BitArr {
 }
 
 #[derive(Clone)]
-pub struct Module {
+pub struct Bit {
     // true = 1 = black
     pub val: bool,
     pub role: Role,
@@ -75,7 +77,7 @@ pub enum Role {
     Num,
 }
 
-impl Module {
+impl Bit {
     pub fn can_edit(&self) -> bool {
         match self.role {
             Role::Data => false,

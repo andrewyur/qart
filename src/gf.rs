@@ -8,7 +8,6 @@ pub struct Field {
 
 impl Field {
     pub fn new() -> Self {
-        // eventually, this should cache these slices to a file, and load them if they are present
         let mut log = [0; 256];
         let mut exp = [0; 510];
 
@@ -40,7 +39,6 @@ impl Field {
 }
 
 // returns a generator polynomial where n message encoding codewords are needed, using Field f
-// no way to check if generator polynomial is correct past n = 254
 pub fn gen_poly(f: &Field, n: usize) -> Vec<u8> {
     let exp = f.exp();
     let log = f.log();
