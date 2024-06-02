@@ -42,34 +42,34 @@ pub mod qr {
             let required_data_bits = consts::required_data_bits(self.version);
             let mut data_bits = BitArr::with_capacity(required_data_bits);
 
-            // byte mode indicators
-            data_bits.extend_bits(&consts::BYTE_MODE_IND, Role::Data);
+            // // byte mode indicators
+            // data_bits.extend_bits(&consts::BYTE_MODE_IND, Role::Data);
 
-            let char_count_indicator_len = consts::char_count_indicator_len_byte(self.version);
-            let mut char_count_indicator = Vec::with_capacity(char_count_indicator_len);
+            // let char_count_indicator_len = consts::char_count_indicator_len_byte(self.version);
+            // let mut char_count_indicator = Vec::with_capacity(char_count_indicator_len);
 
-            let byte = self.url.len() as u16 + 1;
+            // let byte = self.url.len() as u16 + 1;
 
-            let mut mask = 1;
-            for _ in 0..char_count_indicator_len {
-                let bit = ((byte & mask) != 0) as u8;
-                char_count_indicator.insert(0, bit);
-                mask <<= 1;
-            }
-            data_bits.extend_bits(&char_count_indicator, Role::Data);
+            // let mut mask = 1;
+            // for _ in 0..char_count_indicator_len {
+            //     let bit = ((byte & mask) != 0) as u8;
+            //     char_count_indicator.insert(0, bit);
+            //     mask <<= 1;
+            // }
+            // data_bits.extend_bits(&char_count_indicator, Role::Data);
 
-            // encode data_bits
-            self.url.as_bytes().iter().for_each(|b| {
-                for j in (0..8).rev() {
-                    data_bits.push(Module {
-                        val: (b >> j) & 1 == 1,
-                        role: Role::Data,
-                    });
-                }
-            });
+            // // encode data_bits
+            // self.url.as_bytes().iter().for_each(|b| {
+            //     for j in (0..8).rev() {
+            //         data_bits.push(Module {
+            //             val: (b >> j) & 1 == 1,
+            //             role: Role::Data,
+            //         });
+            //     }
+            // });
 
-            // #
-            data_bits.extend_bits(&[0, 0, 1, 0, 0, 0, 1, 1], Role::Data);
+            // // #
+            // data_bits.extend_bits(&[0, 0, 1, 0, 0, 0, 1, 1], Role::Data);
 
             // numeric mode indicators
             data_bits.extend_bits(&consts::NUM_MODE_IND, Role::Data);
@@ -184,7 +184,7 @@ pub mod qr {
             let black = Rgba([0, 0, 0, 255]);
             let white = Rgba([255, 255, 255, 255]);
             let reserved = Rgba([0, 0, 255, 255]);
-            let border = 20;
+            let border = 60;
             let mut code = CodeImg::new(
                 module_size,
                 side_length,
@@ -209,13 +209,6 @@ pub mod qr {
 
             let mut blocks = self.gen_blocks(data_bits);
 
-            let mut block_iters = blocks
-                .iter()
-                .map(|block| block.iter().enumerate())
-                .collect::<Vec<_>>();
-
-            let mut cursor_result = true;
-
             struct EditModules {
                 mx: u32,
                 my: u32,
@@ -227,105 +220,200 @@ pub mod qr {
 
             let mut editable_modules = Vec::with_capacity((side_length * side_length) as usize);
 
-            'byte: for byte_i in 0.. {
-                let iter_i = byte_i % block_iters.len();
-                for _ in 0..8 {
-                    if let Some((bit_index, bit)) = block_iters[iter_i].next() {
-                        let mask = (cursor.y + 1) % 2 == 0;
-                        let color = (bit == 1) == mask;
+            // this block scope is clunky, this could be done better with good lifetime annotations
+            {
+                let mut cursor_result = true;
 
-                        // print!("{bit_index} ");
+                let mut block_data_iters = blocks
+                    .iter()
+                    .map(|block| block.iter_data().peekable())
+                    .collect::<Vec<_>>();
 
-                        editable_modules.push(EditModules {
-                            mx: cursor.x,
-                            my: cursor.y,
-                            bit_index,
-                            block_index: iter_i,
-                            target_color: true,
-                            mask,
-                        });
+                let num_data_bytes = (consts::required_data_bits(self.version) / 8)
+                    + consts::number_of_blocks(self.version, 2) * 8;
 
-                        cursor_result = cursor.next()?
-                    } else {
-                        if block_iters.iter().all(|iter| iter.len() == 0) {
-                            break 'byte;
+                println!("num data bytes: {}", num_data_bytes);
+
+                for byte_i in 0..num_data_bytes {
+                    let iter_i = byte_i % block_data_iters.len();
+
+                    let mut display = true;
+                    let mut sum = 0;
+
+                    for _ in 0..8 {
+                        if let Some((bit_index, bit)) = block_data_iters[iter_i].next() {
+                            let mask = (cursor.y + 1) % 2 == 0;
+                            let color = (bit == 1) == mask;
+
+                            sum <<= 1;
+                            sum += bit;
+
+                            // print!("{bit_index} ");
+
+                            editable_modules.push(EditModules {
+                                mx: cursor.x,
+                                my: cursor.y,
+                                bit_index,
+                                block_index: iter_i,
+                                target_color: true,
+                                mask,
+                            });
+
+                            cursor.place(color);
+
+                            cursor_result = cursor.next()?
+                        } else {
+                            display = false
                         }
                     }
+                    if display {
+                        print!("{:02X} ", sum);
+                    }
+                }
+                for block in block_data_iters.iter_mut() {
+                    println!("{}", block.next().is_none())
+                }
+                let mut block_ec_iters = blocks
+                    .iter()
+                    .map(|block| block.iter_ec())
+                    .collect::<Vec<_>>();
+
+                let num_ec_bytes =
+                    consts::ec_bytes_per_block(self.version) * consts::total_blocks(self.version);
+
+                for byte_i in 0..num_ec_bytes {
+                    let iter_i = byte_i % block_ec_iters.len();
+
+                    let mut display = true;
+                    let mut sum = 0;
+
+                    for _ in 0..8 {
+                        if let Some((bit_index, bit)) = block_ec_iters[iter_i].next() {
+                            let mask = (cursor.y + 1) % 2 == 0;
+                            let color = (bit == 1) == mask;
+
+                            sum <<= 1;
+                            sum += bit;
+
+                            // print!("{bit_index} ");
+
+                            editable_modules.push(EditModules {
+                                mx: cursor.x,
+                                my: cursor.y,
+                                bit_index,
+                                block_index: iter_i,
+                                target_color: true,
+                                mask,
+                            });
+
+                            cursor.place(color);
+
+                            cursor_result = cursor.next()?
+                        } else {
+                            display = false;
+                        }
+                    }
+                    // if display {
+                    //     print!("{:02X} ", sum);
+                    // }
+                }
+
+                while cursor_result {
+                    cursor.place((cursor.y + 1) % 2 == 0);
+                    cursor_result = cursor.next()?
                 }
             }
 
-            while cursor_result {
-                cursor.place((cursor.y + 1) % 2 == 0);
-                cursor_result = cursor.next()?
-            }
-
             if DRAW {
-                editable_modules.iter().for_each(|module| {
+                editable_modules.iter().rev().for_each(|module| {
                     blocks[module.block_index].set(module.bit_index, module.target_color as u8);
                 });
 
+                blocks.iter().for_each(|b| b.debug());
+
+                let mut choice = 0;
                 // do while loop
                 while {
                     let mut errors = Vec::new();
 
                     println!("start of loop");
 
-                    // this is so fucked
-                    // (block_index, bit_index, bit)
-                    let mut numeric_data_iter = blocks
-                        .iter()
-                        .enumerate()
-                        .map(|(block_index, block)| {
-                            block
-                                .iter_nums()
-                                .enumerate()
-                                .map(move |(bit_index, bit)| (block_index, bit_index, bit))
-                        })
-                        .flatten()
-                        .peekable();
-                    let mut choice = 0;
+                    {
+                        // this is so fucked
+                        // (block_index, bit_index, bit)
+                        let mut numeric_data_iter = blocks
+                            .iter()
+                            .enumerate()
+                            .map(|(block_index, block)| {
+                                block
+                                    .iter_nums()
+                                    .map(move |(bit_index, bit)| (block_index, bit_index, bit))
+                            })
+                            .flatten()
+                            .peekable();
 
-                    while numeric_data_iter.peek() != None {
-                        // parse the data
-                        let (block_index, starting_bit_index, bit) =
-                            numeric_data_iter.next().unwrap();
-                        let mut val = bit as u16;
-                        let mut reached = 1;
-                        for _ in 0..9 {
-                            if let Some((_, _, bit)) = numeric_data_iter.next() {
-                                val <<= 1;
-                                val += bit as u16;
-                                reached += 1;
-                            } else {
-                                break;
+                        while numeric_data_iter.peek() != None {
+                            // parse the data
+                            let (block_index, bit_index, bit) = numeric_data_iter.next().unwrap();
+
+                            let mut indexes = Vec::with_capacity(10);
+                            indexes.push((block_index, bit_index));
+                            let mut val = bit as u16;
+                            let mut reached = 1;
+                            for _ in 0..9 {
+                                if let Some((block_index, bit_index, bit)) =
+                                    numeric_data_iter.next()
+                                {
+                                    val <<= 1;
+                                    val += bit as u16;
+                                    reached += 1;
+                                    indexes.push((block_index, bit_index));
+                                } else {
+                                    break;
+                                }
+                            }
+                            // deal with errors
+                            let compareval = match reached {
+                                10 => 999,
+                                7 => 99,
+                                4 => 9,
+                                _ => panic!("wrong number of numeric bits"),
+                            };
+
+                            match reached {
+                                10 => print!("{:03}", val),
+                                7 => print!("{:02}", val),
+                                4 => print!("{:01}", val),
+                                _ => panic!("wrong number of numeric bits"),
+                            };
+
+                            if val > compareval {
+                                // choice between the 5 most significant bits TODO: random
+                                choice = (choice + 1) % 5;
+
+                                errors.push(indexes[choice % indexes.len()]);
                             }
                         }
-                        // deal with errors
-                        let compareval = match reached {
-                            10 => 999,
-                            7 => 99,
-                            4 => 9,
-                            _ => panic!("wrong number of numeric bits"),
-                        };
-                        // println!("{val}");
-
-                        if val > compareval {
-                            // choice between the 5 most significant bits TODO: random
-                            choice = (choice + 1) % 5;
-
-                            errors.push((block_index, starting_bit_index + choice));
-                        }
                     }
-
                     errors.iter().for_each(|(block_index, bit_index)| {
                         blocks[*block_index].reset(*bit_index)
                     });
+
+                    println!("{:?}", errors);
 
                     errors.len() != 0
                 } {}
             }
 
             blocks.iter().for_each(|b| b.debug());
+
+            // let check = blocks
+            //     .iter()
+            //     .map(|b| {
+            //         for  in b.iter() {
+
+            //         }
+            //     });
 
             let painted = blocks
                 .into_iter()
@@ -334,14 +422,23 @@ pub mod qr {
                 })
                 .collect::<Vec<_>>();
 
-            editable_modules.iter().for_each(|module| {
-                code.fill_module(
-                    module.mx,
-                    module.my,
-                    (painted[module.block_index][module.bit_index] == 1) == module.mask,
-                );
-            });
-
+            if DEBUG {
+                editable_modules.iter().for_each(|module| {
+                    code.debug(
+                        module.mx,
+                        module.my,
+                        debug_colors[module.block_index % debug_colors.len()],
+                    );
+                });
+            } else {
+                editable_modules.iter().for_each(|module| {
+                    code.fill_module(
+                        module.mx,
+                        module.my,
+                        (painted[module.block_index][module.bit_index] == 1) == module.mask,
+                    );
+                });
+            }
             // place format information
             let format_string = consts::FORMAT_STRING;
 

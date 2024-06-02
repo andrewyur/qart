@@ -71,7 +71,7 @@ impl<'a> Block<'a> {
             }
         }
 
-        println!("start: {}, end: {}", numeric_data_start, numeric_data_end);
+        println!("num data bytes {}", num_data_bytes);
 
         Self {
             num_data_bytes,
@@ -124,7 +124,7 @@ impl<'a> Block<'a> {
         // zeroes out that bit in the used rows too
         for row_opt in self.used.iter_mut() {
             if let Some(row) = row_opt {
-                if row.bit_at(index) != 0 {
+                if row.bit_at(index) == 1 {
                     let targ = found.as_ref().unwrap();
                     for k in 0..row.len() {
                         row[k] ^= targ[k];
@@ -151,7 +151,7 @@ impl<'a> Block<'a> {
 
             for row_opt in self.basis.iter() {
                 if let Some(row) = row_opt {
-                    if row.bit_at(index) != 0 {
+                    if row.bit_at(index) == 1 {
                         panic!("did not reduce");
                     }
                 }
@@ -171,7 +171,7 @@ impl<'a> Block<'a> {
         }
 
         let mut found = false;
-        for row_opt in self.used.iter_mut() {
+        for row_opt in self.used.iter() {
             if let Some(row) = row_opt {
                 if row.bit_at(index) != 0 {
                     for k in 0..row.len() {
@@ -183,15 +183,27 @@ impl<'a> Block<'a> {
                 }
             }
         }
-        assert!(self.set(index, 0));
+        if found {
+            return;
+        } else {
+            assert!(self.set(index, 0));
+        }
     }
 
-    pub fn iter(&self) -> BlockIter {
-        BlockIter::new(self, 0, self.block_bytes.len() * 8)
+    pub fn iter_data<'b>(&'b self) -> impl Iterator<Item = (usize, u8)> + 'b {
+        BlockIter::new(self, 0, self.num_data_bytes * 8).enumerate()
     }
 
-    pub fn iter_nums(&self) -> BlockIter {
+    pub fn iter_ec<'b>(&'b self) -> impl Iterator<Item = (usize, u8)> + 'b {
+        BlockIter::new(self, self.num_data_bytes * 8, self.block_bytes.len() * 8)
+            .enumerate()
+            .map(move |(i, bit)| (self.num_data_bytes * 8 + i, bit))
+    }
+
+    pub fn iter_nums<'b>(&'b self) -> impl Iterator<Item = (usize, u8)> + 'b {
         BlockIter::new(self, self.numeric_data_start, self.numeric_data_end)
+            .enumerate()
+            .map(move |(i, bit)| (self.numeric_data_start + i, bit))
     }
 
     pub fn ret(self) -> ByteArr {
@@ -217,10 +229,6 @@ pub struct BlockIter<'a> {
 
 impl<'a> BlockIter<'a> {
     fn new(block: &'a Block, start: usize, end: usize) -> Self {
-        if start > end {
-            println!("passed in: start: {}, end: {}", start, end);
-            panic!("start > end");
-        }
         BlockIter {
             block,
             pos: start,
@@ -238,11 +246,5 @@ impl Iterator for BlockIter<'_> {
         } else {
             None
         }
-    }
-}
-
-impl ExactSizeIterator for BlockIter<'_> {
-    fn len(&self) -> usize {
-        self.end - self.pos
     }
 }
