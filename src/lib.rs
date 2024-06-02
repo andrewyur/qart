@@ -4,6 +4,7 @@ mod consts;
 mod cursor;
 mod gf;
 mod img;
+mod target;
 
 pub mod qr {
     use crate::arrs::{Bit, BitArr, BitArrMethods, Role};
@@ -12,11 +13,15 @@ pub mod qr {
     use crate::cursor::Cursor;
     use crate::gf::{self, Field};
     use crate::img::CodeImg;
+    use crate::target;
     use image::{ImageBuffer, Rgba};
+    use rand::prelude::*;
 
     const DEBUG: bool = false;
-    const DRAW: bool = !false;
+    const DRAW: bool = true;
+    const PICTURE: bool = true;
     const NUMBERS_ONLY: bool = false;
+    const RANDOM: bool = false;
 
     // target length is assumed to be less than 256 chars
     // error correction is assumed to be L
@@ -173,6 +178,7 @@ pub mod qr {
             &self,
             module_size: u32,
             border: u32,
+            target_path: String,
         ) -> Result<ImageBuffer<Rgba<u8>, Vec<u8>>, String> {
             // version + url validation
             if self.url.chars().any(|x| x >= '\u{00FF}') {
@@ -183,6 +189,7 @@ pub mod qr {
             }
 
             // data + ec encoding
+            println!("encoding data...");
             let data_bits = self.encode_chars_to_bits();
 
             if DEBUG {
@@ -219,6 +226,7 @@ pub mod qr {
 
             // TODO: when block structs are generated, all module roles are lost. if the navigator could tell which modules could not be
             // edited and put those down, instead of trying to have the block set them, it would save some time
+            println!("generating blocks...");
             let mut blocks = self.gen_blocks(data_bits);
 
             struct Module {
@@ -228,11 +236,34 @@ pub mod qr {
                 block_index: usize,
                 target_color: bool,
                 mask: bool,
+                contrast: u32,
             }
 
-            let mut modules_to_edit = Vec::with_capacity((side_length * side_length) as usize);
+            let mut module_info = Vec::with_capacity((side_length * side_length) as usize);
+
+            let target_arr;
+            let (color, contrast): (
+                Box<dyn Fn(usize, usize) -> bool>,
+                Box<dyn Fn(usize, usize) -> u32>,
+            ) = if DRAW && PICTURE {
+                println!("processing image...");
+
+                // array of contrasts and image length for each pixel corresponding to the target image
+                target_arr = target::get_target_scale(target_path, side_length as usize)?;
+
+                (
+                    Box::new(|x: usize, y: usize| (&target_arr)[y][x].1 > 128),
+                    Box::new(|x: usize, y: usize| (&target_arr)[y][x].0),
+                )
+            } else {
+                (
+                    Box::new(|x: usize, y: usize| x % 2 == 1 || y % 2 == 1),
+                    Box::new(|_x: usize, _y: usize| 0),
+                )
+            };
 
             // TODO: this block scope is clunky, this could be done better with good lifetime annotations for the block iterators
+            println!("mapping modules...");
             {
                 let mut block_data_iters = Vec::new();
                 let mut block_ec_iters = Vec::new();
@@ -274,13 +305,14 @@ pub mod qr {
                                 sum <<= 1;
                                 sum += bit;
 
-                                modules_to_edit.push(Module {
+                                module_info.push(Module {
                                     x: cursor.x,
                                     y: cursor.y,
                                     bit_index,
                                     block_index,
-                                    target_color: cursor.y % 2 == 1 || cursor.x % 2 == 1,
+                                    target_color: color(cursor.x as usize, cursor.y as usize),
                                     mask,
+                                    contrast: contrast(cursor.x as usize, cursor.y as usize),
                                 });
 
                                 if DEBUG {
@@ -313,9 +345,19 @@ pub mod qr {
             }
 
             if DRAW {
+                if RANDOM {
+                    println!("shuffling module list...");
+                    let mut rng = rand::thread_rng();
+                    module_info.shuffle(&mut rng);
+                } else {
+                    println!("sorting module list...");
+                    module_info.sort_by(|a, b| a.contrast.cmp(&b.contrast).reverse())
+                }
+
                 // TODO: conversion between boolean and u8 is ugly and doesnt make much sense
                 // the type for the color of a module should stay consistent across the entire program
-                modules_to_edit.iter().rev().for_each(|module| {
+                println!("setting module colors...");
+                module_info.iter().for_each(|module| {
                     blocks[module.block_index]
                         .set(module.bit_index, (module.target_color == module.mask) as u8);
                 });
@@ -323,6 +365,7 @@ pub mod qr {
                 let mut choice = 0;
 
                 // do while loop
+                println!("checking for errors...");
                 while {
                     let mut errors = Vec::new();
 
@@ -406,16 +449,16 @@ pub mod qr {
                 blocks.iter().for_each(|b| b.debug());
             }
 
-            let modules_to_place = blocks
+            let module_values = blocks
                 .into_iter()
                 .map(|b| return b.ret())
                 .collect::<Vec<_>>();
 
-            modules_to_edit.iter().for_each(|module| {
+            module_info.iter().for_each(|module| {
                 code.fill_module(
                     module.x,
                     module.y,
-                    (modules_to_place[module.block_index][module.bit_index] == 1) == module.mask,
+                    (module_values[module.block_index][module.bit_index] == 1) == module.mask,
                 );
             });
 

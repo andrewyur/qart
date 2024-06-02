@@ -14,7 +14,6 @@ implementation of [QArt Code generator](https://research.swtch.com/qr/draw/) in 
 - https://github.com/7sDream/pyqart
 
 ## Current Itinerary
-- Get randomness working properly
 - Image Encoder
   - process target image
     - shrink image down to dimensions of target qr code
@@ -27,5 +26,6 @@ implementation of [QArt Code generator](https://research.swtch.com/qr/draw/) in 
 - Compile to WASM and host on gh-pages
   - Pixel editor
   - color selector
+  - remove image dependency for smaller package?
 - publish to crates.io as a binary crate
   - will need a cmd line parser + all the other things
