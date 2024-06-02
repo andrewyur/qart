@@ -4,7 +4,7 @@ use crate::{
     gf::{self, Field},
 };
 
-const CHECK: bool = true;
+const CHECK: bool = !true;
 
 pub struct Block<'a> {
     num_data_bytes: usize,
@@ -70,8 +70,6 @@ impl<'a> Block<'a> {
                 }
             }
         }
-
-        println!("num data bytes {}", num_data_bytes);
 
         Self {
             num_data_bytes,

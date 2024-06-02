@@ -19,7 +19,7 @@ implementation of [QArt Code generator](https://research.swtch.com/qr/draw/) in 
   - process target image
     - shrink image down to dimensions of target qr code
     - get contrast of individual pixel locations, see other implementations
-
+- TODOs
   
 ## Long Term Itinerary
 - benchmarking & optimization
