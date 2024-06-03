@@ -2,6 +2,8 @@
 
 implementation of [QArt Code generator](https://research.swtch.com/qr/draw/) in rust
 
+<img src="https://github.com/andrewyur/qart/blob/master/mascot.png" width=400/>
+
 ## Resources
 - https://research.swtch.com/field
 - https://research.swtch.com/qart
