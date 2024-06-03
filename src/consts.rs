@@ -201,3 +201,14 @@ pub const fn versions_string(version: u32) -> [u8; 18] {
 pub const fn total_blocks(version: u32) -> usize {
     number_of_blocks(version, 1) + number_of_blocks(version, 2)
 }
+
+/// For error correction level L, all versions (1-40)
+pub const fn numeric_char_capacity(version: u32) -> usize {
+    let char_capacities = [
+        41, 77, 127, 187, 255, 322, 370, 461, 552, 652, 772, 883, 1022, 1101, 1250, 1408, 1548,
+        1725, 1903, 2061, 2232, 2409, 2620, 2812, 3057, 3283, 3517, 3669, 3909, 4158, 4417, 4686,
+        4965, 5253, 5529, 5836, 6153, 6479, 6743, 7089,
+    ];
+
+    char_capacities[version as usize - 1]
+}

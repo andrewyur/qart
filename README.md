@@ -16,15 +16,18 @@ implementation of [QArt Code generator](https://research.swtch.com/qr/draw/) in 
 - https://github.com/7sDream/pyqart
 
 ## Current Itinerary
-- separate the image encoder from the qr code
+- put each block struct on its own thread
+  - this should work on a wasm runtime as well
 - TODOs
+- Compile to WASM and host on gh-pages
+  - image scaler + cropper
+  - Pixel editor
+  - color selector
+  - automatic brightness threshold generation
   
 ## Long Term Itinerary
 - benchmarking & optimization
   - there are lots of uses of extend_from_slice, and vector creations
-- Compile to WASM and host on gh-pages
-  - Pixel editor
-  - color selector
-  - remove image dependency for smaller package?
+  - the block struct especially is very slow
 - publish to crates.io as a binary crate
   - will need a cmd line parser + all the other things
