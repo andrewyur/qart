@@ -4,7 +4,7 @@ mod consts;
 mod cursor;
 mod gf;
 mod img;
-mod target;
+pub mod target;
 
 pub mod qr {
     use crate::arrs::{Bit, BitArr, BitArrMethods, Role};
@@ -179,6 +179,7 @@ pub mod qr {
             module_size: u32,
             border: u32,
             target_path: String,
+            brightness_threshold: u8,
         ) -> Result<ImageBuffer<Rgba<u8>, Vec<u8>>, String> {
             // version + url validation
             if self.url.chars().any(|x| x >= '\u{00FF}') {
@@ -252,7 +253,7 @@ pub mod qr {
                 target_arr = target::get_target_scale(target_path, side_length as usize)?;
 
                 (
-                    Box::new(|x: usize, y: usize| (&target_arr)[y][x].1 > 128),
+                    Box::new(|x: usize, y: usize| (&target_arr)[y][x].1 < brightness_threshold),
                     Box::new(|x: usize, y: usize| (&target_arr)[y][x].0),
                 )
             } else {
@@ -345,13 +346,23 @@ pub mod qr {
             }
 
             if DRAW {
+                let mut rng = rand::thread_rng();
                 if RANDOM {
-                    println!("shuffling module list...");
-                    let mut rng = rand::thread_rng();
                     module_info.shuffle(&mut rng);
                 } else {
-                    println!("sorting module list...");
-                    module_info.sort_by(|a, b| a.contrast.cmp(&b.contrast).reverse())
+                    module_info.sort_by(|a, b| a.contrast.cmp(&b.contrast).reverse());
+
+                    let mut zero_index = module_info.len();
+
+                    for i in (0..module_info.len()).rev() {
+                        if module_info[i].contrast != 0 {
+                            break;
+                        } else {
+                            zero_index = i;
+                        }
+                    }
+
+                    module_info[zero_index..].shuffle(&mut rng);
                 }
 
                 // TODO: conversion between boolean and u8 is ugly and doesnt make much sense

@@ -3,7 +3,7 @@
 // formula to get percieved brightness: ((299 * r + 587 * g + 114 * b) + 500) / 1000
 // brightness > 125 -> white, else black
 
-use image::{self, DynamicImage, GenericImageView};
+use image::{self, DynamicImage, GenericImageView, Rgb};
 
 pub fn get_target_scale(path: String, side_len: usize) -> Result<Vec<Vec<(u32, u8)>>, String> {
     let target = match image::open(path) {
@@ -35,6 +35,35 @@ pub fn get_target_scale(path: String, side_len: usize) -> Result<Vec<Vec<(u32, u
     Ok(result)
 }
 
+pub fn preview(path: String, version: u32, brightness_threshold: u8) {
+    let target = image::open(path).unwrap();
+
+    let side_len = crate::consts::side_len_of_version(version);
+
+    let scaled = target.resize_exact(side_len, side_len, image::imageops::FilterType::Gaussian);
+
+    let brightness = make_brightness_array(scaled);
+
+    let mut result = image::ImageBuffer::new(side_len, side_len);
+
+    for y in 0..side_len {
+        for x in 0..side_len {
+            result.put_pixel(
+                x,
+                y,
+                if brightness[y as usize][x as usize] < brightness_threshold {
+                    Rgb([0, 0, 0])
+                } else {
+                    Rgb([255 as u8, 255, 255])
+                },
+            )
+        }
+    }
+
+    result.save("preview.png").unwrap();
+}
+
+// TODO: function that gets an intersection of the target image rather than scaling it
 // pub fn get_target_intersect(path: String) -> Vec<Vec<u8>> {}
 
 fn make_brightness_array(image: DynamicImage) -> Vec<Vec<u8>> {

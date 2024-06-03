@@ -14,10 +14,7 @@ implementation of [QArt Code generator](https://research.swtch.com/qr/draw/) in 
 - https://github.com/7sDream/pyqart
 
 ## Current Itinerary
-- Image Encoder
-  - process target image
-    - shrink image down to dimensions of target qr code
-    - get contrast of individual pixel locations, see other implementations
+- separate the image encoder from the qr code
 - TODOs
   
 ## Long Term Itinerary
