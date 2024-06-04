@@ -20,6 +20,7 @@ implementation of [QArt Code generator](https://research.swtch.com/qr/draw/) in 
   - iterate through data_bits instead of data_bytes for mapping phase
   - this will allow for removal of calls to set for unsettable bits
 - TODOs
+- Add a license + LICENSE file
 - Compile to WASM and host on gh-pages
   - image scaler + cropper
   - Pixel editor
