@@ -16,12 +16,16 @@ pub mod qr {
     use crate::target;
     use image::{ImageBuffer, Rgba};
     use rand::prelude::*;
+    use std::rc::Rc;
+    use std::sync::mpsc;
+    use std::thread;
 
     const DEBUG: bool = false;
     const DRAW: bool = true;
     const PICTURE: bool = true;
     const NUMBERS_ONLY: bool = false;
     const RANDOM: bool = false;
+    const THREAD: bool = true;
 
     // target length is assumed to be less than 256 chars
     // error correction is assumed to be L
@@ -117,9 +121,9 @@ pub mod qr {
     fn gen_blocks<'a>(
         bits: BitArr,
         version: u32,
-        field: &'a Field,
+        field: Rc<Field>,
         generator_poly: &Vec<u8>,
-    ) -> Vec<Block<'a>> {
+    ) -> Vec<Block> {
         let number_of_groups = consts::number_of_groups(version);
 
         let mut blocks = Vec::with_capacity(consts::total_blocks(version));
@@ -141,10 +145,15 @@ pub mod qr {
                 block_bits.extend_from_slice(&bits[start..end]);
 
                 // TODO: these ec bytes get converted to bits and right back to bytes by the block struct, should be passed in separate from the bits
-                let ec_bytes = gf::ec_codewords(&field, &block_bits.to_byte_arr(), generator_poly);
+                let ec_bytes =
+                    gf::ec_codewords(Rc::clone(&field), &block_bits.to_byte_arr(), generator_poly);
                 block_bits.extend_bytes(&ec_bytes, Role::EC);
 
-                blocks.push(Block::new(data_bits_per_block / 8, field, block_bits));
+                blocks.push(Block::new(
+                    data_bits_per_block / 8,
+                    Rc::clone(&field),
+                    block_bits,
+                ));
             }
         }
 
@@ -216,8 +225,8 @@ pub mod qr {
             return Err(String::from("version must be from 1 to 40!"));
         }
 
-        let field = Field::new();
-        let generator_poly = gf::gen_poly(&field, consts::ec_bytes_per_block(version));
+        let field = Rc::new(Field::new());
+        let generator_poly = gf::gen_poly(Rc::clone(&field), consts::ec_bytes_per_block(version));
         url.push('#');
 
         // data + ec encoding
@@ -260,7 +269,7 @@ pub mod qr {
         // TODO: when block structs are generated, all module roles are lost. if the navigator could tell which modules could not be
         // edited and put those down, instead of trying to have the block set them, it would save some time
         println!("generating blocks...");
-        let mut blocks = gen_blocks(data_bits, version, &field, &generator_poly);
+        let mut blocks = gen_blocks(data_bits, version, Rc::clone(&field), &generator_poly);
 
         struct Module {
             x: u32,
@@ -397,10 +406,55 @@ pub mod qr {
             // TODO: conversion between boolean and u8 is ugly and doesnt make much sense
             // the type for the color of a module should stay consistent across the entire program
             println!("setting module colors...");
-            module_info.iter().for_each(|module| {
-                blocks[module.block_index]
-                    .set(module.bit_index, (module.target_color == module.mask) as u8);
-            });
+
+            if THREAD {
+                let mut threads = Vec::with_capacity(blocks.len());
+                let mut transmitters = Vec::with_capacity(blocks.len());
+
+                // set up transmitters array, and threads with recievers
+                // move blocks into their threads
+                blocks.into_iter().for_each(|mut block| {
+                    let (transmitter, receiver) = mpsc::channel();
+                    transmitters.push(transmitter);
+
+                    let handle = thread::spawn(move || {
+                        loop {
+                            let message = receiver.recv();
+                            match message {
+                                Ok((index, val)) => {
+                                    block.set(index, val);
+                                }
+                                Err(_) => break,
+                            }
+                        }
+                        block
+                    });
+                    threads.push(handle);
+                });
+
+                // send all the indexes as messages to the threads to their respective blocks
+                module_info.iter().for_each(|module| {
+                    transmitters[module.block_index]
+                        .send((module.bit_index, (module.target_color == module.mask) as u8))
+                        .unwrap();
+                });
+
+                // drop transmitters, sending signal to threads to break their loop
+                transmitters
+                    .into_iter()
+                    .for_each(|transmitter| drop(transmitter));
+
+                // join all the threads and move back into blocks
+                blocks = threads
+                    .into_iter()
+                    .map(|thread| thread.join().unwrap())
+                    .collect::<Vec<_>>()
+            } else {
+                module_info.iter().for_each(|module| {
+                    blocks[module.block_index]
+                        .set(module.bit_index, (module.target_color == module.mask) as u8);
+                });
+            }
 
             let mut choice = 0;
 

@@ -1,6 +1,8 @@
 // a fast implementation of the galois field of 256 and reed solomon encoding optimizations based on https://research.swtch.com/field
 // operations are mod 285 to conform to QR code spec
 
+use std::rc::Rc;
+
 pub struct Field {
     log: [u8; 256],
     exp: [u8; 510],
@@ -39,7 +41,7 @@ impl Field {
 }
 
 // returns a generator polynomial where n message encoding codewords are needed, using Field f
-pub fn gen_poly(f: &Field, n: usize) -> Vec<u8> {
+pub fn gen_poly(f: Rc<Field>, n: usize) -> Vec<u8> {
     let exp = f.exp();
     let log = f.log();
 
@@ -78,7 +80,7 @@ pub fn gen_poly(f: &Field, n: usize) -> Vec<u8> {
 }
 
 // generates (gen.len() - 1) error correcting bytes for message mes, using Field f and generator polynomial gen
-pub fn ec_codewords(f: &Field, mes: &[u8], gen: &[u8]) -> Vec<u8> {
+pub fn ec_codewords(f: Rc<Field>, mes: &[u8], gen: &[u8]) -> Vec<u8> {
     let exp = f.exp();
     let log = f.log();
 

@@ -3,39 +3,28 @@ use crate::{
     arrs::{BitArr, BitArrMethods, ByteArr, ByteArrMethods},
     gf::{self, Field},
 };
+use std::rc::Rc;
 
-const CHECK: bool = !true;
-
-pub struct Block<'a> {
+pub struct Block {
     num_data_bytes: usize,
     block_bytes: ByteArr,
     basis: Vec<Option<ByteArr>>,
     used: Vec<Option<ByteArr>>,
-    field: &'a Field,
-    poly: Vec<u8>,
     numeric_data_start: usize,
     numeric_data_end: usize,
 }
 
-impl<'a> Block<'a> {
-    pub fn new(num_data_bytes: usize, field: &'a Field, block_bits: BitArr) -> Self {
+impl Block {
+    pub fn new(num_data_bytes: usize, field: Rc<Field>, block_bits: BitArr) -> Self {
         let in_block_bytes = block_bits.to_byte_arr();
 
         let num_ec_bytes = in_block_bytes.len() - num_data_bytes;
 
-        let poly = gf::gen_poly(&field, num_ec_bytes);
+        let poly = gf::gen_poly(Rc::clone(&field), num_ec_bytes);
 
         let mut block_bytes = Vec::with_capacity(num_ec_bytes + num_data_bytes);
         block_bytes.extend_from_slice(&in_block_bytes[..num_data_bytes]);
-
-        if CHECK {
-            block_bytes.extend_from_slice(&gf::ec_codewords(&field, &block_bytes, &poly));
-            if block_bytes[num_data_bytes..] != in_block_bytes[num_data_bytes..] {
-                panic!("incorrect check bytes!");
-            }
-        } else {
-            block_bytes.extend_from_slice(&in_block_bytes[num_data_bytes..]);
-        }
+        block_bytes.extend_from_slice(&in_block_bytes[num_data_bytes..]);
 
         let mut basis =
             vec![Some(Vec::with_capacity(num_data_bytes + num_ec_bytes)); num_data_bytes * 8];
@@ -48,7 +37,7 @@ impl<'a> Block<'a> {
 
             mask.as_mut().unwrap()[index / 8] = 1 << (7 - (index & 7));
 
-            let ec_bytes = gf::ec_codewords(&field, &mask.as_ref().unwrap(), &poly);
+            let ec_bytes = gf::ec_codewords(Rc::clone(&field), &mask.as_ref().unwrap(), &poly);
             mask.as_mut().unwrap().extend_from_slice(&ec_bytes);
         }
 
@@ -76,21 +65,8 @@ impl<'a> Block<'a> {
             block_bytes,
             basis,
             used,
-            field,
-            poly,
             numeric_data_start,
             numeric_data_end,
-        }
-    }
-
-    fn check(&self) {
-        if gf::ec_codewords(
-            &self.field,
-            &self.block_bytes[..self.num_data_bytes],
-            &self.poly,
-        ) != self.block_bytes[self.num_data_bytes..]
-        {
-            panic!("ecc mismatch");
         }
     }
 
@@ -144,19 +120,7 @@ impl<'a> Block<'a> {
         // move the row into used
         self.used[found_index] = found;
 
-        if CHECK {
-            self.check();
-
-            for row_opt in self.basis.iter() {
-                if let Some(row) = row_opt {
-                    if row.bit_at(index) == 1 {
-                        panic!("did not reduce");
-                    }
-                }
-            }
-        }
-
-        return true;
+        true
     }
 
     pub fn reset(&mut self, index: usize) {
@@ -211,7 +175,6 @@ impl<'a> Block<'a> {
     }
 
     pub fn ret(self) -> ByteArr {
-        self.check();
         self.block_bytes.to_bits()
     }
 
@@ -226,7 +189,7 @@ impl<'a> Block<'a> {
 
 // bit iterator for block
 pub struct BlockIter<'a> {
-    block: &'a Block<'a>,
+    block: &'a Block,
     pos: usize,
     end: usize,
 }

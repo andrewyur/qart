@@ -2,7 +2,7 @@
 
 implementation of [QArt Code generator](https://research.swtch.com/qr/draw/) in rust
 
-<img src="https://github.com/andrewyur/qart/blob/master/mascot.png" width=400/>
+<img alt="qr code with a pattern that looks like a cat" src="https://github.com/andrewyur/qart/blob/master/mascot.png" width=400/>
 
 ## Resources
 - https://research.swtch.com/field
@@ -16,8 +16,9 @@ implementation of [QArt Code generator](https://research.swtch.com/qr/draw/) in 
 - https://github.com/7sDream/pyqart
 
 ## Current Itinerary
-- put each block struct on its own thread
-  - this should work on a wasm runtime as well
+- create blocks after data has already been mapped
+  - iterate through data_bits instead of data_bytes for mapping phase
+  - this will allow for removal of calls to set for unsettable bits
 - TODOs
 - Compile to WASM and host on gh-pages
   - image scaler + cropper
