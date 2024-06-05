@@ -70,6 +70,7 @@ pub struct Bit {
     pub role: Role,
 }
 
+// TODO: change this back to a can_edit bool
 #[derive(Clone, Copy)]
 pub enum Role {
     Data,

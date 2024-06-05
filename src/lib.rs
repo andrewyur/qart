@@ -226,6 +226,7 @@ pub mod qr {
         }
 
         let field = Rc::new(Field::new());
+        // TODO: standardize the name of the generator polynomial across the crate
         let generator_poly = gf::gen_poly(Rc::clone(&field), consts::ec_bytes_per_block(version));
         url.push('#');
 
@@ -281,8 +282,12 @@ pub mod qr {
             contrast: u32,
         }
 
+        // TODO: data modules are added to this list, and because they are subtracted from the basis array in the block struct when it is created,
+        // this results in calls to set that are apparently redundant. i tried to fix this and ended up making the code even slower, but if
+        // if you are reading this and want to contribute, feel free to give it a shot
         let mut module_info = Vec::with_capacity((side_length * side_length) as usize);
 
+        // TODO: remove the draw option and rid myself of this mess
         let target_arr;
         let (color, contrast): (
             Box<dyn Fn(usize, usize) -> bool>,

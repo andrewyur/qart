@@ -79,6 +79,7 @@ pub fn gen_poly(f: Rc<Field>, n: usize) -> Vec<u8> {
     gen
 }
 
+// TODO: Make this extend the message vec with the bits instead of returning a new vec
 // generates (gen.len() - 1) error correcting bytes for message mes, using Field f and generator polynomial gen
 pub fn ec_codewords(f: Rc<Field>, mes: &[u8], gen: &[u8]) -> Vec<u8> {
     let exp = f.exp();

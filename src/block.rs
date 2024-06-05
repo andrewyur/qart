@@ -30,6 +30,8 @@ impl Block {
             vec![Some(Vec::with_capacity(num_data_bytes + num_ec_bytes)); num_data_bytes * 8];
         let used = vec![None; num_data_bytes * 8];
 
+        // TODO: these arrays are the same for every block of the same size.
+        // should cache, but i dont know if the compiler already does this so it could be redundant.
         for (index, mask) in basis.iter_mut().enumerate() {
             mask.as_mut()
                 .unwrap()
@@ -70,6 +72,8 @@ impl Block {
         }
     }
 
+    // TODO: the setting phase seems to take up the most time in the process, but i am not sure to what degree it can be optimized.
+    // could use another look
     pub fn set(&mut self, index: usize, val: u8) -> bool {
         let mut found: Option<Vec<u8>> = None;
         let mut found_index = 0;
