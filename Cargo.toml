@@ -1,7 +1,13 @@
 [package]
 name = "qart"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
+authors = ["Russ Cox", "Andrew Yurovchak"]
+description = "encodes images into qr codes"
+repository = "https://github.com/andrewyur/qart"
+license-file = "LICENSE"
+keywords = ["QR", "QR-Code", "QArt" ] 
+exclude = ["*.png", "*.jpg", ".*"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
