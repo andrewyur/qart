@@ -20,12 +20,9 @@ pub mod qr {
     use std::sync::mpsc;
     use std::thread;
 
+    // TODO: use the dbg! macro instead of printing stuff with println! for the debug option
     const DEBUG: bool = false;
-    const DRAW: bool = true;
-    const PICTURE: bool = true;
     const NUMBERS_ONLY: bool = false;
-    const RANDOM: bool = false;
-    const THREAD: bool = true;
 
     // target length is assumed to be less than 256 chars
     // error correction is assumed to be L
@@ -164,6 +161,7 @@ pub mod qr {
         version: u32,
         path: String,
         brightness_threshold: u8,
+        random: bool,
     ) -> Result<ImageBuffer<Rgba<u8>, Vec<u8>>, String> {
         let side_len = crate::consts::side_len_of_version(version) as usize;
 
@@ -177,7 +175,24 @@ pub mod qr {
             }
         }
 
-        module_info.sort_by(|a, b| a.2.cmp(&b.2).reverse());
+        let mut rng = rand::thread_rng();
+        if random {
+            module_info.shuffle(&mut rng);
+        } else {
+            module_info.sort_by(|a, b| a.2.cmp(&b.2).reverse());
+
+            let mut zero_index = module_info.len();
+
+            for i in (0..module_info.len()).rev() {
+                if module_info[i].2 != 0 {
+                    break;
+                } else {
+                    zero_index = i;
+                }
+            }
+
+            module_info[zero_index..].shuffle(&mut rng);
+        }
 
         let mut result = image::ImageBuffer::new(side_len as u32, side_len as u32);
 
@@ -216,8 +231,9 @@ pub mod qr {
         module_size: u32,
         path: String,
         brightness_threshold: u8,
+        random: bool,
     ) -> Result<ImageBuffer<Rgba<u8>, Vec<u8>>, String> {
-        // version + url validation
+        // version, image, & url validation
         if url.chars().any(|x| x >= '\u{00FF}') {
             return Err(String::from("url cannot be encoded as ISO 8859-1!"));
         }
@@ -287,27 +303,12 @@ pub mod qr {
         // if you are reading this and want to contribute, feel free to give it a shot
         let mut module_info = Vec::with_capacity((side_length * side_length) as usize);
 
-        // TODO: remove the draw option and rid myself of this mess
-        let target_arr;
-        let (color, contrast): (
-            Box<dyn Fn(usize, usize) -> bool>,
-            Box<dyn Fn(usize, usize) -> u32>,
-        ) = if DRAW && PICTURE {
-            println!("processing image...");
+        println!("processing image...");
+        // array of contrasts and image length for each pixel corresponding to the target image
+        let target_arr = target::get_target_scale(path, side_length as usize)?;
 
-            // array of contrasts and image length for each pixel corresponding to the target image
-            target_arr = target::get_target_scale(path, side_length as usize)?;
-
-            (
-                Box::new(|x: usize, y: usize| (&target_arr)[y][x].1 < brightness_threshold),
-                Box::new(|x: usize, y: usize| (&target_arr)[y][x].0),
-            )
-        } else {
-            (
-                Box::new(|x: usize, y: usize| x % 2 == 1 || y % 2 == 1),
-                Box::new(|_x: usize, _y: usize| 0),
-            )
-        };
+        let color = |x: usize, y: usize| (&target_arr)[y][x].1 < brightness_threshold;
+        let contrast = |x: usize, y: usize| (&target_arr)[y][x].0;
 
         // TODO: this block scope is clunky, this could be done better with good lifetime annotations for the block iterators
         println!("mapping modules...");
@@ -388,159 +389,150 @@ pub mod qr {
             code.save();
         }
 
-        if DRAW {
-            let mut rng = rand::thread_rng();
-            if RANDOM {
-                module_info.shuffle(&mut rng);
-            } else {
-                module_info.sort_by(|a, b| a.contrast.cmp(&b.contrast).reverse());
+        let mut rng = rand::thread_rng();
+        if random {
+            module_info.shuffle(&mut rng);
+        } else {
+            module_info.sort_by(|a, b| a.contrast.cmp(&b.contrast).reverse());
 
-                let mut zero_index = module_info.len();
+            let mut zero_index = module_info.len();
 
-                for i in (0..module_info.len()).rev() {
-                    if module_info[i].contrast != 0 {
-                        break;
-                    } else {
-                        zero_index = i;
-                    }
+            for i in (0..module_info.len()).rev() {
+                if module_info[i].contrast != 0 {
+                    break;
+                } else {
+                    zero_index = i;
                 }
-
-                module_info[zero_index..].shuffle(&mut rng);
             }
 
-            // TODO: conversion between boolean and u8 is ugly and doesnt make much sense
-            // the type for the color of a module should stay consistent across the entire program
-            println!("setting module colors...");
-
-            if THREAD {
-                let mut threads = Vec::with_capacity(blocks.len());
-                let mut transmitters = Vec::with_capacity(blocks.len());
-
-                // set up transmitters array, and threads with recievers
-                // move blocks into their threads
-                blocks.into_iter().for_each(|mut block| {
-                    let (transmitter, receiver) = mpsc::channel();
-                    transmitters.push(transmitter);
-
-                    let handle = thread::spawn(move || {
-                        loop {
-                            let message = receiver.recv();
-                            match message {
-                                Ok((index, val)) => {
-                                    block.set(index, val);
-                                }
-                                Err(_) => break,
-                            }
-                        }
-                        block
-                    });
-                    threads.push(handle);
-                });
-
-                // send all the indexes as messages to the threads to their respective blocks
-                module_info.iter().for_each(|module| {
-                    transmitters[module.block_index]
-                        .send((module.bit_index, (module.target_color == module.mask) as u8))
-                        .unwrap();
-                });
-
-                // drop transmitters, sending signal to threads to break their loop
-                transmitters
-                    .into_iter()
-                    .for_each(|transmitter| drop(transmitter));
-
-                // join all the threads and move back into blocks
-                blocks = threads
-                    .into_iter()
-                    .map(|thread| thread.join().unwrap())
-                    .collect::<Vec<_>>()
-            } else {
-                module_info.iter().for_each(|module| {
-                    blocks[module.block_index]
-                        .set(module.bit_index, (module.target_color == module.mask) as u8);
-                });
-            }
-
-            let mut choice = 0;
-
-            // do while loop
-            println!("checking for errors...");
-            while {
-                let mut errors = Vec::new();
-
-                if DEBUG {
-                    println!("start of number correction loop")
-                };
-
-                // TODO: another block scope because of the shitty lifetime annotations for the iterators
-                {
-                    // produces an iterator for the data bits representing numbers, in the form of (block_index, bit_index, bit)
-                    let mut numeric_data_iter = blocks
-                        .iter()
-                        .enumerate()
-                        .map(|(block_index, block)| {
-                            block
-                                .iter_nums()
-                                .map(move |(bit_index, bit)| (block_index, bit_index, bit))
-                        })
-                        .flatten()
-                        .peekable();
-
-                    while numeric_data_iter.peek() != None {
-                        // parse the data
-                        let (block_index, bit_index, bit) = numeric_data_iter.next().unwrap();
-
-                        let mut indexes = Vec::with_capacity(10);
-                        indexes.push((block_index, bit_index));
-
-                        let mut val = bit as u16;
-                        let mut reached = 1;
-                        for _ in 0..9 {
-                            if let Some((block_index, bit_index, bit)) = numeric_data_iter.next() {
-                                val <<= 1;
-                                val += bit as u16;
-                                reached += 1;
-                                indexes.push((block_index, bit_index));
-                            } else {
-                                break;
-                            }
-                        }
-                        // deal with errors
-                        let compareval = match reached {
-                            10 => 999,
-                            7 => 99,
-                            4 => 9,
-                            _ => panic!("wrong number of numeric bits"),
-                        };
-
-                        if DEBUG {
-                            match reached {
-                                10 => print!("{:03}", val),
-                                7 => print!("{:02}", val),
-                                4 => print!("{:01}", val),
-                                _ => (),
-                            };
-                        }
-
-                        if val > compareval {
-                            // TODO: make this choice between the bits to flip random
-                            choice = (choice + 1) % 5;
-
-                            errors.push(indexes[choice % indexes.len()]);
-                        }
-                    }
-                }
-                errors
-                    .iter()
-                    .for_each(|(block_index, bit_index)| blocks[*block_index].reset(*bit_index));
-
-                if DEBUG {
-                    println!("{:?}", errors);
-                }
-
-                errors.len() != 0
-            } {}
+            module_info[zero_index..].shuffle(&mut rng);
         }
+
+        // TODO: conversion between boolean and u8 is ugly and doesnt make much sense
+        // the type for the color of a module should stay consistent across the entire program
+        println!("setting module colors...");
+
+        let mut threads = Vec::with_capacity(blocks.len());
+        let mut transmitters = Vec::with_capacity(blocks.len());
+
+        // set up transmitters array, and threads with recievers
+        // move blocks into their threads
+        blocks.into_iter().for_each(|mut block| {
+            let (transmitter, receiver) = mpsc::channel();
+            transmitters.push(transmitter);
+
+            let handle = thread::spawn(move || {
+                loop {
+                    let message = receiver.recv();
+                    match message {
+                        Ok((index, val)) => {
+                            block.set(index, val);
+                        }
+                        Err(_) => break,
+                    }
+                }
+                block
+            });
+            threads.push(handle);
+        });
+
+        // send all the indexes as messages to the threads to their respective blocks
+        module_info.iter().for_each(|module| {
+            transmitters[module.block_index]
+                .send((module.bit_index, (module.target_color == module.mask) as u8))
+                .unwrap();
+        });
+
+        // drop transmitters, sending signal to threads to break their loop
+        transmitters
+            .into_iter()
+            .for_each(|transmitter| drop(transmitter));
+
+        // join all the threads and move back into blocks
+        blocks = threads
+            .into_iter()
+            .map(|thread| thread.join().unwrap())
+            .collect::<Vec<_>>();
+
+        let mut choice = 0;
+
+        // do while loop
+        println!("checking for errors...");
+        while {
+            let mut errors = Vec::new();
+
+            if DEBUG {
+                println!("start of number correction loop")
+            };
+
+            // TODO: another block scope because of the shitty lifetime annotations for the iterators
+            {
+                // produces an iterator for the data bits representing numbers, in the form of (block_index, bit_index, bit)
+                let mut numeric_data_iter = blocks
+                    .iter()
+                    .enumerate()
+                    .map(|(block_index, block)| {
+                        block
+                            .iter_nums()
+                            .map(move |(bit_index, bit)| (block_index, bit_index, bit))
+                    })
+                    .flatten()
+                    .peekable();
+
+                while numeric_data_iter.peek() != None {
+                    // parse the data
+                    let (block_index, bit_index, bit) = numeric_data_iter.next().unwrap();
+
+                    let mut indexes = Vec::with_capacity(10);
+                    indexes.push((block_index, bit_index));
+
+                    let mut val = bit as u16;
+                    let mut reached = 1;
+                    for _ in 0..9 {
+                        if let Some((block_index, bit_index, bit)) = numeric_data_iter.next() {
+                            val <<= 1;
+                            val += bit as u16;
+                            reached += 1;
+                            indexes.push((block_index, bit_index));
+                        } else {
+                            break;
+                        }
+                    }
+                    // deal with errors
+                    let compareval = match reached {
+                        10 => 999,
+                        7 => 99,
+                        4 => 9,
+                        _ => panic!("wrong number of numeric bits"),
+                    };
+
+                    if DEBUG {
+                        match reached {
+                            10 => print!("{:03}", val),
+                            7 => print!("{:02}", val),
+                            4 => print!("{:01}", val),
+                            _ => (),
+                        };
+                    }
+
+                    if val > compareval {
+                        // TODO: make this choice between the bits to flip random
+                        choice = (choice + 1) % 5;
+
+                        errors.push(indexes[choice % indexes.len()]);
+                    }
+                }
+            }
+            errors
+                .iter()
+                .for_each(|(block_index, bit_index)| blocks[*block_index].reset(*bit_index));
+
+            if DEBUG {
+                println!("{:?}", errors);
+            }
+
+            errors.len() != 0
+        } {}
 
         if DEBUG {
             blocks.iter().for_each(|b| b.debug());
