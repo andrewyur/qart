@@ -33,6 +33,9 @@ The following were made to generate a v40 qr code with the source image used in 
 ## A Note on the TODOs
 If you take a look at the source code, you will see TODO comments scattered heavily throughout it. The only things left on the TODO list are restructuring and potential optimization. I am new to rust, so I am not sure to what extent the code is optimized by the compiler, so things like removing unused vector allocations and caching are on there. At this point, attempting to make (technical) optimizations is starting take a lot longer, and have diminishing returns (the last attempted optimization broke the code, and also made it slower so i decided it wasnt worth it). Since I don't really care if this crate is used by anyone else, continuing to work on todos is not going to be benefiting anyone much, so I have decided to call it here, and pivot to working on other projects.
 
+## More Info 
+Read more about it on my website: https://andrewyur.github.io/#p/qart-encoder
+
 ## Related Links
 - https://research.swtch.com/field
 - https://research.swtch.com/qart
