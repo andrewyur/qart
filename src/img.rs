@@ -1,5 +1,6 @@
 // a struct to abstract placement of individual pixels, allowing its user to only think about placement of modules
-use crate::consts;
+use crate::consts::{self, Version};
+use anyhow::Context;
 use image::{ImageBuffer, Rgba};
 
 pub struct CodeImg {
@@ -16,8 +17,8 @@ impl CodeImg {
         self.img
     }
 
-    pub fn save(&self) {
-        self.img.save("debug.png").unwrap();
+    pub fn save(&self) -> anyhow::Result<()> {
+        self.img.save("debug.png").context("Could not save debug code")
     }
 
     // true = black, false = white
@@ -97,7 +98,7 @@ impl CodeImg {
         black: Rgba<u8>,
         white: Rgba<u8>,
         reserved: Rgba<u8>,
-        version: u32,
+        version: Version,
         border: u32,
     ) -> Self {
         let mut code = CodeImg {
@@ -205,7 +206,7 @@ impl CodeImg {
         }
 
         // place version information if applicable
-        if version >= 7 {
+        if version.get() >= 7 {
             let version_string = consts::versions_string(version);
 
             for i in 0..6 {

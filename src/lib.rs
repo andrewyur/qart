@@ -9,26 +9,25 @@ pub mod target;
 pub mod qr {
     use crate::arrs::{Bit, BitArr, BitArrMethods, Role};
     use crate::block::Block;
-    use crate::consts;
+    use crate::consts::{self, Version};
     use crate::cursor::Cursor;
     use crate::gf::{self, Field};
     use crate::img::CodeImg;
     use crate::target;
+    use anyhow::{Context, anyhow};
     use image::{ImageBuffer, Rgba};
     use rand::prelude::*;
     use std::rc::Rc;
     use std::sync::mpsc;
     use std::thread;
 
-    // TODO: use the dbg! macro instead of printing stuff with println! for the debug option
-    const DEBUG: bool = false;
     const NUMBERS_ONLY: bool = false;
 
     // target length is assumed to be less than 256 chars
     // error correction is assumed to be L
     // encoding is assumed to be binary
 
-    fn encode_chars_to_bits(version: u32, url: String) -> BitArr {
+    fn encode_chars_to_bits(version: Version, url: String) -> BitArr {
         // see https://www.thonky.com/qr-code-tutorial & https://www.nayuki.io/page/creating-a-qr-code-step-by-step
         let required_data_bits = consts::required_data_bits(version);
         let mut data_bits = BitArr::with_capacity(required_data_bits);
@@ -78,9 +77,7 @@ pub mod qr {
 
         let byte = (num_full_groups * 3 + remaining_group) as u16;
 
-        if DEBUG {
-            println!("numbers added: {byte}");
-        }
+        log::debug!("numbers added: {byte}");
 
         let mut mask = 1;
         for _ in 0..char_count_indicator_len {
@@ -117,7 +114,7 @@ pub mod qr {
 
     fn gen_blocks<'a>(
         bits: BitArr,
-        version: u32,
+        version: Version,
         field: Rc<Field>,
         generator_poly: &Vec<u8>,
     ) -> Vec<Block> {
@@ -158,11 +155,13 @@ pub mod qr {
     }
 
     pub fn preview(
-        version: u32,
+        version: u8,
         path: String,
         brightness_threshold: u8,
         random: bool,
-    ) -> Result<ImageBuffer<Rgba<u8>, Vec<u8>>, String> {
+    ) -> anyhow::Result<ImageBuffer<Rgba<u8>, Vec<u8>>> {
+        let version = Version::new(version)?;
+
         let side_len = crate::consts::side_len_of_version(version) as usize;
 
         let target = target::get_target_scale(path, side_len)?;
@@ -221,25 +220,22 @@ pub mod qr {
         Ok(result)
     }
 
-    // TODO: cache the brightness & contrast produced by the preview function, and use that to build a code
-    // pub fn build_from_preview(&self, url: String, module_size: u32) -> Result<ImageBuffer<Rgba<u8>, Vec<u8>>, String> {}
-
     // TODO: module size should be a const, it doesnt really matter what the module size is to the user
     pub fn build(
-        version: u32,
+        version: u8,
         mut url: String,
         module_size: u32,
         path: String,
         brightness_threshold: u8,
         random: bool,
-    ) -> Result<ImageBuffer<Rgba<u8>, Vec<u8>>, String> {
+        debug: bool,
+    ) -> anyhow::Result<ImageBuffer<Rgba<u8>, Vec<u8>>> {
         // version, image, & url validation
         if url.chars().any(|x| x >= '\u{00FF}') {
-            return Err(String::from("url cannot be encoded as ISO 8859-1!"));
+            return Err(anyhow!("url cannot be encoded as ISO 8859-1!"));
         }
-        if version > 40 || version == 0 {
-            return Err(String::from("version must be from 1 to 40!"));
-        }
+
+        let version = Version::new(version)?;
 
         let field = Rc::new(Field::new());
         // TODO: standardize the name of the generator polynomial across the crate
@@ -247,13 +243,11 @@ pub mod qr {
         url.push('#');
 
         // data + ec encoding
-        println!("encoding data...");
+        log::info!("encoding data...");
         let data_bits = encode_chars_to_bits(version, url);
 
-        if DEBUG {
-            let data_bytes = data_bits.to_byte_arr();
-            println!("{:02X?}", data_bytes);
-        }
+        let data_bytes = data_bits.to_byte_arr();
+        log::debug!("{:02X?}", data_bytes);
 
         // create the code image
         let side_length = consts::side_len_of_version(version);
@@ -285,7 +279,7 @@ pub mod qr {
 
         // TODO: when block structs are generated, all module roles are lost. if the navigator could tell which modules could not be
         // edited and put those down, instead of trying to have the block set them, it would save some time
-        println!("generating blocks...");
+        log::info!("generating blocks...");
         let mut blocks = gen_blocks(data_bits, version, Rc::clone(&field), &generator_poly);
 
         struct Module {
@@ -303,7 +297,7 @@ pub mod qr {
         // if you are reading this and want to contribute, feel free to give it a shot
         let mut module_info = Vec::with_capacity((side_length * side_length) as usize);
 
-        println!("processing image...");
+        log::info!("processing image...");
         // array of contrasts and image length for each pixel corresponding to the target image
         let target_arr = target::get_target_scale(path, side_length as usize)?;
 
@@ -311,10 +305,10 @@ pub mod qr {
         let contrast = |x: usize, y: usize| (&target_arr)[y][x].0;
 
         // TODO: this block scope is clunky, this could be done better with good lifetime annotations for the block iterators
-        println!("mapping modules...");
+        log::info!("mapping modules...");
         {
-            let mut block_data_iters = Vec::new();
-            let mut block_ec_iters = Vec::new();
+            let mut block_data_iters = Vec::with_capacity(blocks.len());
+            let mut block_ec_iters = Vec::with_capacity(blocks.len());
 
             blocks.iter().for_each(|block| {
                 let (data_iter, ec_iter) = block.iter_data_ec();
@@ -362,17 +356,17 @@ pub mod qr {
                                 contrast: contrast(cursor.x as usize, cursor.y as usize),
                             });
 
-                            if DEBUG {
+                            if debug {
                                 cursor.place_debug(debug_colors[block_index % debug_colors.len()]);
                             }
 
-                            cursor_result = cursor.next()?
+                            cursor_result = cursor.next().context("Could not find next module")?;
                         } else {
                             display = false
                         }
                     }
-                    if DEBUG && display {
-                        print!("{:02X} ", sum);
+                    if display {
+                        log::debug!("{:02X} ", sum);
                     }
                 }
 
@@ -385,8 +379,8 @@ pub mod qr {
             }
         }
 
-        if DEBUG {
-            code.save();
+        if debug {
+            code.save()?;
         }
 
         let mut rng = rand::thread_rng();
@@ -410,7 +404,7 @@ pub mod qr {
 
         // TODO: conversion between boolean and u8 is ugly and doesnt make much sense
         // the type for the color of a module should stay consistent across the entire program
-        println!("setting module colors...");
+        log::info!("setting module colors...");
 
         let mut threads = Vec::with_capacity(blocks.len());
         let mut transmitters = Vec::with_capacity(blocks.len());
@@ -437,11 +431,10 @@ pub mod qr {
         });
 
         // send all the indexes as messages to the threads to their respective blocks
-        module_info.iter().for_each(|module| {
+        module_info.iter().map(|module| {
             transmitters[module.block_index]
-                .send((module.bit_index, (module.target_color == module.mask) as u8))
-                .unwrap();
-        });
+                .send((module.bit_index, (module.target_color == module.mask) as u8)).context("Could not send module indexes to threads")
+        }).collect::<anyhow::Result<Vec<_>>>()?;
 
         // drop transmitters, sending signal to threads to break their loop
         transmitters
@@ -457,15 +450,12 @@ pub mod qr {
         let mut choice = 0;
 
         // do while loop
-        println!("checking for errors...");
+        log::info!("checking for errors...");
         while {
             let mut errors = Vec::new();
 
-            if DEBUG {
-                println!("start of number correction loop")
-            };
+            log::debug!("start of number correction loop");
 
-            // TODO: another block scope because of the shitty lifetime annotations for the iterators
             {
                 // produces an iterator for the data bits representing numbers, in the form of (block_index, bit_index, bit)
                 let mut numeric_data_iter = blocks
@@ -479,10 +469,7 @@ pub mod qr {
                     .flatten()
                     .peekable();
 
-                while numeric_data_iter.peek() != None {
-                    // parse the data
-                    let (block_index, bit_index, bit) = numeric_data_iter.next().unwrap();
-
+                while let Some((block_index, bit_index, bit)) = numeric_data_iter.next() {
                     let mut indexes = Vec::with_capacity(10);
                     indexes.push((block_index, bit_index));
 
@@ -500,20 +487,18 @@ pub mod qr {
                     }
                     // deal with errors
                     let compareval = match reached {
-                        10 => 999,
-                        7 => 99,
-                        4 => 9,
-                        _ => panic!("wrong number of numeric bits"),
-                    };
+                        10 => Ok(999),
+                        7 => Ok(99),
+                        4 => Ok(9),
+                        _ => Err(anyhow!("wrong number of numeric bits")),
+                    }?;
 
-                    if DEBUG {
-                        match reached {
-                            10 => print!("{:03}", val),
-                            7 => print!("{:02}", val),
-                            4 => print!("{:01}", val),
-                            _ => (),
-                        };
-                    }
+                    match reached {
+                        10 => log::debug!("{:03}", val),
+                        7 => log::debug!("{:02}", val),
+                        4 => log::debug!("{:01}", val),
+                        _ => (),
+                    };
 
                     if val > compareval {
                         // TODO: make this choice between the bits to flip random
@@ -527,14 +512,12 @@ pub mod qr {
                 .iter()
                 .for_each(|(block_index, bit_index)| blocks[*block_index].reset(*bit_index));
 
-            if DEBUG {
-                println!("{:?}", errors);
-            }
+            log::debug!("{:?}", errors);
 
             errors.len() != 0
         } {}
 
-        if DEBUG {
+        if debug {
             blocks.iter().for_each(|b| b.debug());
         }
 

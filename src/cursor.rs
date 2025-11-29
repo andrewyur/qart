@@ -1,3 +1,5 @@
+use anyhow::anyhow;
+
 // abstracts navigating the qr code when placing modules
 use crate::img::CodeImg;
 
@@ -27,13 +29,13 @@ impl<'a> Cursor<'a> {
             code,
         }
     }
-    pub fn next(&mut self) -> Result<bool, String> {
+    pub fn next(&mut self) -> anyhow::Result<bool> {
         // TODO: This code is ugly and unintuitive, see https://www.pclviewer.com/rs2/qrtopology.htm
         match self.next_move {
             Move::Left => {
                 if self.x != 0 && !self.code.is_open(self.x - 1, self.y) {
-                    self.code.save();
-                    return Err(format!("No valid moves! at ({},{})", self.x, self.y));
+                    self.code.save()?;
+                    return Err(anyhow!("No valid moves! at ({},{})", self.x, self.y));
                 }
                 self.x -= 1;
                 match &self.prev_move {
@@ -89,8 +91,8 @@ impl<'a> Cursor<'a> {
                     self.next_move = Move::Left;
                     self.prev_move = Move::Left;
                 } else {
-                    self.code.save();
-                    return Err(format!("No valid moves! at ({},{})", self.x, self.y));
+                    self.code.save()?;
+                    return Err(anyhow!("No valid moves! at ({},{})", self.x, self.y));
                 }
             }
             Move::DownRight => {

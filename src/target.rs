@@ -3,13 +3,12 @@
 // formula to get percieved brightness: ((299 * r + 587 * g + 114 * b) + 500) / 1000
 // brightness > 125 -> white, else black
 
+use anyhow::Context;
 use image::{self, DynamicImage, GenericImageView, Rgb};
+use crate::consts::Version;
 
-pub fn get_target_scale(path: String, side_len: usize) -> Result<Vec<Vec<(u32, u8)>>, String> {
-    let target = match image::open(path) {
-        Ok(img) => img,
-        Err(_) => return Err(String::from("Could not open target image")),
-    };
+pub fn get_target_scale(path: String, side_len: usize) -> anyhow::Result<Vec<Vec<(u32, u8)>>> {
+    let target = image::open(path).context("Could not open target image")?;
 
     let scaled = target.resize_exact(
         side_len as u32,
@@ -35,8 +34,8 @@ pub fn get_target_scale(path: String, side_len: usize) -> Result<Vec<Vec<(u32, u
     Ok(result)
 }
 
-pub fn preview(path: String, version: u32, brightness_threshold: u8) {
-    let target = image::open(path).unwrap();
+pub fn preview(path: String, version: Version, brightness_threshold: u8) -> anyhow::Result<()> {
+    let target = image::open(path).context("Could not open target image")?;
 
     let side_len = crate::consts::side_len_of_version(version);
 
@@ -60,11 +59,9 @@ pub fn preview(path: String, version: u32, brightness_threshold: u8) {
         }
     }
 
-    result.save("preview.png").unwrap();
+    result.save("preview.png").context("Could not save preview image")?;
+    Ok(())
 }
-
-// TODO: function that gets an intersection of the target image rather than scaling it
-// pub fn get_target_intersect(path: String) -> Vec<Vec<u8>> {}
 
 fn make_brightness_array(image: DynamicImage) -> Vec<Vec<u8>> {
     let mut brightness_array = Vec::with_capacity(image.height() as usize);

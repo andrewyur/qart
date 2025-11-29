@@ -30,17 +30,15 @@ impl Block {
             vec![Some(Vec::with_capacity(num_data_bytes + num_ec_bytes)); num_data_bytes * 8];
         let used = vec![None; num_data_bytes * 8];
 
-        // TODO: these arrays are the same for every block of the same size.
-        // should cache, but i dont know if the compiler already does this so it could be redundant.
         for (index, mask) in basis.iter_mut().enumerate() {
-            mask.as_mut()
-                .unwrap()
-                .extend(std::iter::repeat_with(|| 0).take(num_data_bytes));
+            let mask_ref = mask.as_mut().unwrap();
 
-            mask.as_mut().unwrap()[index / 8] = 1 << (7 - (index & 7));
+            mask_ref.extend(std::iter::repeat_with(|| 0).take(num_data_bytes));
 
-            let ec_bytes = gf::ec_codewords(Rc::clone(&field), &mask.as_ref().unwrap(), &poly);
-            mask.as_mut().unwrap().extend_from_slice(&ec_bytes);
+            mask_ref[index / 8] = 1 << (7 - (index & 7));
+
+            let ec_bytes = gf::ec_codewords(Rc::clone(&field), &mask_ref, &poly);
+            mask_ref.extend_from_slice(&ec_bytes);
         }
 
         let mut numeric_data_start = 0;
@@ -95,36 +93,35 @@ impl Block {
             }
         }
 
-        if found.is_none() {
-            return false;
-        }
+        if let Some(targ) = found {
 
-        // zeroes out that bit in the used rows too
-        for row_opt in self.used.iter_mut() {
-            if let Some(row) = row_opt {
-                if row.bit_at(index) == 1 {
-                    let targ = found.as_ref().unwrap();
-                    for k in 0..row.len() {
-                        row[k] ^= targ[k];
+            // zeroes out that bit in the used rows too
+            for row_opt in self.used.iter_mut() {
+                if let Some(row) = row_opt {
+                    if row.bit_at(index) == 1 {
+                        for k in 0..row.len() {
+                            row[k] ^= targ[k];
+                        }
                     }
                 }
             }
-        }
-
-        // so now we have found a row where the bit at index is 1, and then cut that bit from all the other rows
-        // now we apply that row to the block if we need to, and since we took that row out of basis,
-        // that bit cannot be changed again
-        if self.block_bytes.bit_at(index) != val {
-            let targ = found.as_ref().unwrap();
-            for j in 0..targ.len() {
-                self.block_bytes[j] ^= targ[j];
+    
+            // so now we have found a row where the bit at index is 1, and then cut that bit from all the other rows
+            // now we apply that row to the block if we need to, and since we took that row out of basis,
+            // that bit cannot be changed again
+            if self.block_bytes.bit_at(index) != val {
+                for j in 0..targ.len() {
+                    self.block_bytes[j] ^= targ[j];
+                }
             }
+    
+            // move the row into used
+            self.used[found_index] = Some(targ);
+
+            true
+        } else {
+            false
         }
-
-        // move the row into used
-        self.used[found_index] = found;
-
-        true
     }
 
     pub fn reset(&mut self, index: usize) {
@@ -187,7 +184,7 @@ impl Block {
     }
 
     pub fn debug(&self) {
-        println!("{:02X?}", self.block_bytes);
+        log::debug!("{:02X?}", self.block_bytes);
     }
 }
 
